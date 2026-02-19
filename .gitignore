@@ -1,0 +1,31 @@
+# Python / pytest
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+*.egg-info/
+*.egg
+
+# Model and data (do not push weights or downloaded caches)
+model_cache/
+dllm/
+*.safetensors
+*.bin
+
+# Generated / local
+tree_structure.txt
+.cursor/
+
+# Secrets and env (never commit)
+.env
+.env.*
+*.pem
+*_credentials*
+
+# OS and IDE
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
