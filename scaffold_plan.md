@@ -20,11 +20,11 @@
 | 5 | ✅ Done | rewards.py (SyntaxReward + empty→0), advantages.py (simple + BranchGRPO), tests. |
 | 6 | ✅ Done | loss.py (transitions, log prob on changed positions, vocab_size arg), tests. |
 | 7 | ✅ Done | trainer.py, single_step_train.py, test_integration.py. **40 tests pass.** |
-| 7.5 | 🔜 Next | Run Phase 0 + Phase 7 scripts with real HF model; fix HF-specific bugs. |
-| 8 | Pending | Baseline GRPO, run_experiment.py, HumanEval eval. (Start after 7.5.) |
+| 7.5 | ✅ Done | Run Phase 0 + Phase 7 scripts with real HF model; fix HF-specific bugs. |
+| 8 | 🔜 Next | Baseline GRPO, run_experiment.py, HumanEval eval. (Start after 7.5.) |
 | 9 | Later | Ablations (after Phase 8). |
 
-**What's next:** Complete Phase 7.5 (real-model verification): run `validate_model.py`, `entropy_profile.py`, `tree_viz.py`, and `single_step_train.py` with the downloaded HuggingFace model and confirm all Phase 0 and Phase 7 checklist items. Fix any shape/device/tokenizer bugs. Then proceed to Phase 8 (baseline GRPO, run_experiment, HumanEval).
+**What's next:** Proceed to Phase 8 (baseline GRPO, run_experiment, HumanEval). Phase 8 uses **heuristic reward only**; see **Reward roadmap** (below Phase 8) for graduating to execution/EvalPlus when scaling up.
 
 ---
 
@@ -589,17 +589,17 @@ Integration test (can be slow, mark with `@pytest.mark.slow`):
 
 **Verification checklist (confirm with real model):**
 
-- [ ] `python scripts/validate_model.py` runs without errors
-- [ ] Model loads on MPS (or CPU fallback) with correct parameter count (~630M)
-- [ ] Forward pass produces logits of shape `[1, seq_len, vocab_size]`
-- [ ] `tokenizer.mask_token_id` is not None
-- [ ] Generated text is coherent Python code (not garbage)
-- [ ] Peak memory usage < 6GB
-- [ ] `python scripts/entropy_profile.py` runs and shows decreasing entropy
-- [ ] `python scripts/tree_viz.py` shows a real tree with branches
-- [ ] `python scripts/single_step_train.py` completes
-- [ ] Training step: loss finite, non-NaN; gradients finite; model weights changed after step
-- [ ] Memory usage stays under 8GB
+- [X] `python scripts/validate_model.py` runs without errors
+- [X] Model loads on MPS (or CPU fallback) with correct parameter count (~630M)
+- [X] Forward pass produces logits of shape `[1, seq_len, vocab_size]`
+- [X] `tokenizer.mask_token_id` is not None
+- [X] Generated text is coherent Python code (not garbage)
+- [?] Peak memory usage < 6GB
+- [X] `python scripts/entropy_profile.py` runs and shows decreasing entropy
+- [X] `python scripts/tree_viz.py` shows a real tree with branches
+- [X] `python scripts/single_step_train.py` completes
+- [X] Training step: loss finite, non-NaN; gradients finite; model weights changed after step
+- [?] Memory usage stays under 8GB
 
 **Outcome:** Any failures (shape errors, device errors, NaNs, wrong tokenizer behavior) are fixed in this phase before starting Phase 8. Optionally use `python scripts/verify_real_model.py` to run all four steps and report pass/fail.
 
@@ -611,6 +611,8 @@ Integration test (can be slow, mark with `@pytest.mark.slow`):
 **Time**: ~1 day (mostly training time)  
 **Depends on**: Phase 7  
 **Recommended**: Move to GPU for this phase (see D-012)
+
+**Reward for Phase 8 (smoke test):** Use the existing **cheap heuristic** (`SyntaxReward`) only. No need to implement execution-based or EvalPlus rewards for Phase 8. The aim is to confirm the pipeline trains (loss decreases, rewards improve), that baseline vs entropy-MCTS can be compared on the same reward, and that HumanEval pass@1 is measurable. Upgrading the reward is planned for when graduating to larger models and serious experiments (see **Reward roadmap** below).
 
 ### Step 8.1: Implement Standard GRPO Baseline
 
@@ -651,6 +653,26 @@ Or implement a minimal HumanEval eval loop using the dLLM sampler.
 
 ---
 
+## Reward roadmap: from smoke test to serious GRPO objective
+
+Phase 8 uses **heuristic reward only** (D-008). When scaling model size and moving to real experiments, upgrade the reward in stages. This roadmap is grounded in `literature_reference.md` and keeps the plan explicit for future work.
+
+| Stage | Reward | When | Literature / tools |
+|-------|--------|------|--------------------|
+| **Phase 8** | SyntaxReward (AST + keywords + docstring) | Smoke test: validate pipeline, baseline vs entropy-MCTS | — |
+| **Post–Phase 8** | Execution-based: run code in sandbox, score by test outcomes | First serious runs (e.g. 0.5B→1B, HumanEval) | DiffuCoder (Apple): execution + EvalPlus, +4.4% on code; Flow-GRPO: GenEval 63%→95% |
+| **Graduation** | EvalPlus (HumanEval with extended test cases) | Reporting comparable code benchmarks | DiffuCoder uses EvalPlus; same benchmark as community |
+| **Optional** | LLM-as-judge, or dense reward (per-test pass) | Ablations / variance reduction | D-008 alternatives; DiffuCoder’s Coupled-GRPO for variance reduction |
+
+**Concrete next steps (no code in Phase 8):**
+1. **Phase 8:** Ship with `SyntaxReward` only; document in run_experiment that reward is heuristic.
+2. **After Phase 8:** Implement sandboxed execution (e.g. subprocess + timeout, or existing safe-exec lib), plug in HumanEval test cases per problem, return fraction passed as reward. Replace or swap `RewardFunction` in trainer config.
+3. **For publication / scaling:** Switch to EvalPlus for evaluation and, if desired, for training reward; consider Coupled-GRPO (complementary mask noise) from DiffuCoder for stability.
+
+See **D-008** in `research_decisions.md` for status and alternatives (LLM-as-judge, etc.).
+
+---
+
 ## Phase 9: Ablations (Future)
 
 Not for initial scaffold — run after Phase 8 validates the approach.
@@ -665,6 +687,7 @@ Not for initial scaffold — run after Phase 8 validates the approach.
 7. **Entropy aggregation**: mean vs max vs sum
 8. **Remasking strategy**: `low_confidence` vs `random`
 9. **Width/depth pruning** (BranchGRPO optional enhancements)
+10. **Reward function**: syntax heuristic vs execution (sandbox + test cases) vs EvalPlus — once execution-based reward is implemented (see Reward roadmap above).
 
 ---
 
