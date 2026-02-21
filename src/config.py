@@ -35,6 +35,14 @@ class MCTSConfig:
     model_name_or_path: str = "dllm-collection/Qwen2.5-Coder-0.5B-Instruct-diffusion-mdlm-v0.1"
     device: Optional[str] = None  # None = auto-detect via get_device()
 
+    # Experiment (Phase 8)
+    num_epochs: int = 2
+    num_baseline_samples: int = 4  # K completions per prompt for baseline GRPO
+    run_name: Optional[str] = None  # WandB / checkpoint run name
+    checkpoint_dir: str = "checkpoints"  # root dir; method subdirs added (baseline_grpo, entropy_mcts_grpo)
+    wandb_project: str = "entropy-tree-grpo"
+    save_every_steps: Optional[int] = None  # None = save only at end of run
+
     def __post_init__(self) -> None:
         if self.device is None:
             from src.utils import get_device

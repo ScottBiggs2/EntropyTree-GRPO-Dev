@@ -105,3 +105,16 @@ class WeightedGRPOLoss:
             -1, child_state.unsqueeze(-1)
         ).squeeze(-1)
         return (token_lp * changed.float()).sum()
+
+    def trajectory_log_prob(
+        self,
+        model: torch.nn.Module,
+        transitions: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+    ) -> torch.Tensor:
+        """Sum of log prob over (parent_state, child_state, parent_attn) for baseline GRPO."""
+        if not transitions:
+            return torch.tensor(0.0, device=next(model.parameters()).device)
+        total = sum(
+            self._log_prob_transition(model, p, c, a) for p, c, a in transitions
+        )
+        return total

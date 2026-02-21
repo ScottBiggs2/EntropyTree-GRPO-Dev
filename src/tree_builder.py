@@ -246,3 +246,48 @@ class EntropyGuidedTreeBuilder:
             parent=node,
             mask_id=self.mask_id,
         )
+
+    def generate_one_trajectory(
+        self, prompt: str
+    ) -> Tuple[str, List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]]:
+        """Generate one full completion from prompt, return (completion_str, list of (parent_state, child_state, attn)) for baseline GRPO."""
+        root = self._create_root(prompt)
+        state = root.state.clone()
+        attn = root.attention_mask.clone()
+        prompt_len = root.prompt_len
+        max_new = self.config.max_new_tokens
+        response_region = torch.zeros_like(state, dtype=torch.bool, device=state.device)
+        response_region[prompt_len : prompt_len + max_new] = True
+        transitions: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
+
+        with torch.no_grad():
+            while True:
+                mask_now = (state == self.mask_id) & response_region
+                n_masked = mask_now.sum().item()
+                if n_masked == 0:
+                    break
+                k = min(n_masked, 64)
+                parent_state = state.clone()
+                parent_attn = attn.clone()
+                logits = self.model(
+                    state.unsqueeze(0), attention_mask=attn.unsqueeze(0)
+                ).logits[0]
+                logits_n = add_gumbel_noise(logits, self.config.temperature)
+                x0_pred = torch.argmax(logits_n, dim=-1)
+                probs = F.softmax(logits, dim=-1)
+                conf = torch.gather(
+                    probs, -1, x0_pred.unsqueeze(-1)
+                ).squeeze(-1)
+                confidence = torch.where(
+                    mask_now, conf, torch.full_like(conf, -1e9)
+                )
+                x0_pred = torch.where(mask_now, x0_pred, state)
+                _, sel = torch.topk(confidence, k=k)
+                state[sel] = x0_pred[sel]
+                transitions.append((parent_state, state.clone(), parent_attn))
+
+        completion = self.tokenizer.decode(
+            state[prompt_len : prompt_len + max_new].tolist(),
+            skip_special_tokens=True,
+        )
+        return completion, transitions

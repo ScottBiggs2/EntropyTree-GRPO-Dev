@@ -3,6 +3,7 @@ transformers>=4.40.0,!=4.57.0
 accelerate>=0.27.0
 numpy>=1.24,<2
 pytest
+wandb
 # dllm: do NOT pip install from git (pulls yanked transformers 4.57.0 and training deps).
 # Install from clone in editable mode, without deps, after the above:
 #   git clone https://github.com/ZHZisZZ/dllm.git && pip install -e ./dllm --no-deps

@@ -81,6 +81,7 @@ You should see 40 tests pass. No model download required (tests use mocks where 
 - **Entropy profile**: `python scripts/entropy_profile.py`
 - **Tree visualization**: `python scripts/tree_viz.py`
 - **Single training step**: `python scripts/single_step_train.py`
+- **Phase 8 experiment**: `python scripts/run_experiment.py --method baseline --num_epochs 2` or `--method entropy_mcts`. Logs to WandB if `WANDB_API_KEY` is set; use `--no_wandb` to disable. Checkpoints go to `checkpoints/baseline_grpo/` and `checkpoints/entropy_mcts_grpo/` (see CONTRIBUTING / .gitignore).
 
 Run from repo root. Model: `dllm-collection/Qwen2.5-Coder-0.5B-Instruct-diffusion-mdlm-v0.1`, or a local path after running `prepare_local_model.py`.
 

@@ -17,6 +17,7 @@ dllm/
 # Generated / local
 tree_structure.txt
 .cursor/
+checkpoints/
 
 # Secrets and env (never commit)
 .env

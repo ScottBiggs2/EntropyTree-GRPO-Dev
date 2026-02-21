@@ -635,14 +635,16 @@ Experiment runner:
 
 ### Step 8.3: Evaluation on HumanEval
 
-Use dLLM's built-in eval pipeline:
+**For now:** Reuse dLLM infrastructure for a quick test once the concept is demonstrated. Run from a dLLM clone with the saved checkpoint path:
+
 ```bash
+# From a dLLM clone (see README Option 2), point at our checkpoint
 bash examples/a2d/mdlm/eval.sh \
     --model_type coder \
-    --model_name_or_path <checkpoint_path>
+    --model_name_or_path <path_to_checkpoints/baseline_grpo/run_XXX/final.pt or entropy_mcts_grpo/...>
 ```
 
-Or implement a minimal HumanEval eval loop using the dLLM sampler.
+Our checkpoints are PyTorch `state_dict` saves; if dLLM’s eval expects a HuggingFace model dir, export the checkpoint to that format or run a minimal in-repo HumanEval loop. Return to a proper in-repo eval (or EvalPlus) once baseline vs entropy-MCTS comparison is validated.
 
 ### Verification Checklist
 - [ ] Baseline GRPO trains and improves reward over 50 steps

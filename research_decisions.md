@@ -236,6 +236,24 @@ sampled = torch.multinomial(probs, num_samples=1)
 
 ---
 
+## D-013: Baseline for Phase 8 Comparison
+
+| Field | Value |
+|-------|-------|
+| **Status** | `DECIDED` |
+| **Decision** | Single baseline: **trajectory-level GRPO** (no tree). Generate K completions per prompt with the same model and temperature; reward − mean advantage; GRPO loss on trajectory log-prob. |
+| **Rationale** | Keeps comparison simple (same reward, same model, same sampling; only difference is tree vs no tree). No extra baselines (e.g. no “uniform tree” or “no entropy weight”) for initial Phase 8; can add ablations later. |
+
+**Details**:
+- Baseline: `BaselineGRPOTrainer` — K samples per prompt, trajectory log-prob summed over denoising steps, advantage = reward − mean(rewards).
+- Entropy-MCTS: `EntropyMCTSTrainer` — tree with entropy-guided expansion, BranchGRPO advantages, time+entropy weighted loss.
+- Checkpoints: `checkpoints/baseline_grpo/` and `checkpoints/entropy_mcts_grpo/` so both are clearly named.
+
+**Your Notes**:
+> _(paste responses here)_
+
+---
+
 ## Decision Log (Chronological)
 
 | Date | ID | Decision | Decided By |
@@ -247,3 +265,4 @@ sampled = torch.multinomial(probs, num_samples=1)
 | 2026-02-08 | D-004 | MDLM Only |Scott (Expand after initial verification) |
 | 2026-02-08 | D-005 | Mean Aggregation |Scott (Explore other Entropy Aggregation methods later?) |
 | 2026-02-08 | D-006 | `low_confidence` | Scott (Ablate these methods later) |
+| 2026-02-18 | D-013 | Single baseline: trajectory GRPO (no tree) | Plan (Phase 8) |
