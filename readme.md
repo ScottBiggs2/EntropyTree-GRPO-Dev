@@ -13,7 +13,7 @@ Entropy-guided MCTS for GRPO training of diffusion language models (Qwen2.5 0.5B
 Install only the stack; load the model from a **local directory** that uses our dllm-free custom code so the HuggingFace loader never resolves `import dllm`. From the repo root:
 
 ```bash
-conda create -n EntropyTreeGRPO_env python=3.10 -y   # or 3.11
+conda create -n EntropyTreeGRPO_env python=3.10 -y   # Must be 3.10 for dLLM compatability
 conda activate EntropyTreeGRPO_env
 cd /path/to/EntropyTree-GRPO
 python -m pip install -r requirements.txt
@@ -28,7 +28,7 @@ USE_LOCAL_MODEL_CODE=1 LOCAL_MODEL_PATH=./model_cache python scripts/validate_mo
 
 Our `model_custom_code/modeling_qwen2.py` is a copy of the model's custom code with the `if __name__ == "__main__"` block removed (no `import dllm`). The script above downloads the model and overwrites the modeling file with this copy. For `entropy_profile.py`, use the same env vars. For `tree_viz.py` and `single_step_train.py`, set `model_name_or_path` to your local path (e.g. `model_cache`) via config or CLI.
 
-### Option 2: Clone dllm and install editable (Option A + D)
+### Option 2: Clone dllm and install editable (Option A + D) - Preferred/Dev Approach
 
 If you need the full dllm package (e.g. for dllm samplers or training recipes), use the [dLLM GitHub](https://github.com/ZHZisZZ/dllm) recommended setup and avoid the yanked transformers pin:
 
