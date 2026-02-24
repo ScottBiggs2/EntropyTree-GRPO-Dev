@@ -186,11 +186,12 @@ def main():
     args = p.parse_args()
 
     run_name = args.run_name or f"run_{int(time.time())}"
+    # WandB on whenever user did not pass --no_wandb; uses credentials from `wandb login` (no WANDB_API_KEY required)
     use_wandb = not args.no_wandb
     if use_wandb:
-        print("WandB: enabled (uses credentials from `wandb login` or WANDB_API_KEY)")
+        print("WandB: enabled")
     else:
-        print("WandB: disabled (use --no_wandb to suppress this message)")
+        print("WandB: disabled")
 
     config = MCTSConfig(
         num_epochs=args.num_epochs,
