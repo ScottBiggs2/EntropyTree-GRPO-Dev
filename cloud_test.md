@@ -9,16 +9,16 @@ eline wall_sec=19.25180222839117
 
 EntropyTree Test: 
 
-Arguments: (<class 'FutureWarning'>,)
-[entropy diagnostic] depth=1 node: n_masked=16, token_entropy at masked: min=0.004109 mean=0.759217 max=1.588802
-[entropy_mcts] epoch 0 loss=0.044906562056254394 avg_reward=0.3 max_reward=0.3 tree_nodes=10.0 tree_leaves=5.0 avg_entropy=0.5541790458891126 epoch=0 method
-=entropy_mcts
-[entropy_mcts] epoch 1 loss=-0.023084453410572674 avg_reward=0.15 max_reward=0.15 tree_nodes=10.0 tree_leaves=5.0 avg_entropy=0.4882656203375923 epoch=1 met
-hod=entropy_mcts
-srun: error: Timed out waiting for job step to complete
+[entropy diagnostic] depth=1 node: n_masked=16, token_entropy at masked: min=0.088237 mean=0.589878 max=1.269172
+[entropy_mcts] epoch 0 loss=-0.038151068543946266 avg_reward=0.3 max_reward=0.3 tree_nodes=10.0 tree_leaves=5.0 avg_entropy=0.49408312638600665 n_transitions
+=9.0 epoch=0 method=entropy_mcts
+[entropy_mcts] epoch 1 loss=-0.13779956164459387 avg_reward=0.10999999999999999 max_reward=0.15 tree_nodes=10.0 tree_leaves=5.0 avg_entropy=0.350354300604926
+17 n_transitions=9.0 epoch=1 method=entropy_mcts
+[entropy_mcts] Saved final.pt and config.json to checkpoints/entropy_mcts_grpo/2_epoch_retest
 
+---
 
-My session ended at an inconvenient time, but I'm concerned about the number of leaves in the EntropyTree GRPO test.
+I notice that the loss is sometimes negative, or flips between positive and negative.
 
 ---
 

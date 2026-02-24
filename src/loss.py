@@ -40,19 +40,43 @@ class WeightedGRPOLoss:
             return torch.tensor(0.0, device=next(model.parameters()).device), {}
 
         total_loss = 0.0
+        # Debug aggregates to understand stability of the weighted GRPO signal.
+        n = len(transitions)
+        sum_abs_adv = 0.0
+        sum_w_time = 0.0
+        sum_w_ent = 0.0
+        sum_weight = 0.0
+        sum_weighted_term = 0.0  # - w * A * log_prob per transition
+
         for trans in transitions:
             log_prob = self._log_prob_transition(
-                model, trans.parent_state, trans.child_state,
-                trans.parent_attention_mask,
+                model, trans.parent_state, trans.child_state, trans.parent_attention_mask
             )
-            w = (
-                self.config.alpha_time * trans.time_weight
-                + self.config.alpha_entropy * trans.entropy_weight
-            )
-            total_loss = total_loss - w * trans.advantage * log_prob
+            w_time = trans.time_weight
+            w_ent = trans.entropy_weight
+            w = self.config.alpha_time * w_time + self.config.alpha_entropy * w_ent
+            contrib = -w * trans.advantage * log_prob
+            total_loss = total_loss + contrib
 
-        loss = total_loss / len(transitions)
-        metrics = {"loss": loss.item(), "n_transitions": len(transitions)}
+            # Floating-point summaries (on CPU) for logging.
+            lp_val = float(log_prob.item())
+            adv_val = float(trans.advantage)
+            sum_abs_adv += abs(adv_val)
+            sum_w_time += float(w_time)
+            sum_w_ent += float(w_ent)
+            sum_weight += float(w)
+            sum_weighted_term += float(-w * adv_val * lp_val)
+
+        loss = total_loss / n
+        metrics = {
+            "loss": loss.item(),
+            "n_transitions": n,
+            "mean_abs_adv": sum_abs_adv / n,
+            "mean_w_time": sum_w_time / n,
+            "mean_w_ent": sum_w_ent / n,
+            "mean_weight": sum_weight / n,
+            "mean_weighted_adv_logp": sum_weighted_term / n,
+        }
         return loss, metrics
 
     def _collect_transitions(self, root: MCTSNode, vocab_size: int) -> List[TreeTransition]:

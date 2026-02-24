@@ -140,7 +140,8 @@ def run_entropy_mcts(
     for epoch in range(config.num_epochs):
         # We aggregate core metrics plus a few debug signals that help verify that
         # we are training on the full tree evolution (all parent->child transitions),
-        # not just the final leaves.
+        # not just the final leaves, and that the weighted GRPO signal is numerically
+        # well-behaved (advantages and weights not exploding).
         agg = {
             "loss": [],
             "avg_reward": [],
@@ -151,6 +152,12 @@ def run_entropy_mcts(
             # From WeightedGRPOLoss.compute_loss; should be ~= tree_nodes - 1
             # if every edge contributes to the loss.
             "n_transitions": [],
+            # Debug summaries from WeightedGRPOLoss.compute_loss
+            "mean_abs_adv": [],
+            "mean_w_time": [],
+            "mean_w_ent": [],
+            "mean_weight": [],
+            "mean_weighted_adv_logp": [],
         }
         for prompt in prompts:
             m = trainer.train_step(prompt)
