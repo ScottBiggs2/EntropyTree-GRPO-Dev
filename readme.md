@@ -114,6 +114,14 @@ One-shot: `python scripts/verify_real_model.py` runs all four steps and reports 
 - After adding a remote: `git remote add origin <url>`, then `git push -u origin main` (or your branch). Run `python scripts/verify_real_model.py` locally before pushing to confirm tests and real-model steps pass.
 
 ---
+## Running experiments: 
+
+```bash 
+python scripts/run_experiment.py --method baseline --num_epochs 10 --run_name 10_epoch_baseline
+python scripts/run_experiment.py --method entropy_mcts --num_epochs 10 --run_name 10_epoch_test
+```
+
+---
 
 ## Quick repro (copy-paste)
 

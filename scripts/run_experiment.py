@@ -138,7 +138,20 @@ def run_entropy_mcts(
 
     global_step = 0
     for epoch in range(config.num_epochs):
-        agg = {"loss": [], "avg_reward": [], "max_reward": [], "tree_nodes": [], "tree_leaves": [], "avg_entropy": []}
+        # We aggregate core metrics plus a few debug signals that help verify that
+        # we are training on the full tree evolution (all parent->child transitions),
+        # not just the final leaves.
+        agg = {
+            "loss": [],
+            "avg_reward": [],
+            "max_reward": [],
+            "tree_nodes": [],
+            "tree_leaves": [],
+            "avg_entropy": [],
+            # From WeightedGRPOLoss.compute_loss; should be ~= tree_nodes - 1
+            # if every edge contributes to the loss.
+            "n_transitions": [],
+        }
         for prompt in prompts:
             m = trainer.train_step(prompt)
             for k in agg:

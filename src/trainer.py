@@ -121,6 +121,8 @@ class EntropyMCTSTrainer:
         self.model.eval()
         root, leaves = self.tree_builder.build_tree(prompt)
         if not leaves:
+            # No usable leaves means no meaningful gradient signal for this prompt.
+            # This should be rare; if it happens frequently something is wrong in tree building.
             return {"loss": 0.0, "avg_reward": 0.0, "tree_nodes": 0, "tree_leaves": 0}
 
         completions = [
@@ -148,6 +150,16 @@ class EntropyMCTSTrainer:
 
         def count_nodes(n: MCTSNode) -> int:
             return 1 + sum(count_nodes(c) for c in n.children)
+
+        # Debug/consistency check: every edge parent->child should become exactly one
+        # TreeTransition in the loss. This guards against accidentally training only on
+        # leaves or dropping parts of the core denoising evolution.
+        n_transitions = loss_metrics.get("n_transitions")
+        if n_transitions is not None:
+            expected_transitions = count_nodes(root) - 1
+            assert (
+                n_transitions == expected_transitions
+            ), f"n_transitions={n_transitions} but tree_nodes-1={expected_transitions}"
 
         avg_reward = sum(rewards) / len(rewards) if rewards else 0.0
         max_reward = max(rewards) if rewards else 0.0
