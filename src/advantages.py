@@ -15,25 +15,30 @@ class AdvantageComputer:
         leaves: List[MCTSNode],
         rewards: List[float],
         mode: str = "branchgrpo",
+        advantage_clip: float = 2.0,
     ) -> None:
-        """Assign rewards to leaves, then run backprop. Mutates node.advantage (and fused_reward)."""
+        """Assign rewards to leaves, then run backprop. Mutates node.advantage (and fused_reward).
+        advantage_clip: clamp each advantage to [-advantage_clip, +advantage_clip] (D-014)."""
         if len(leaves) != len(rewards):
             raise ValueError("leaves and rewards length mismatch")
         for leaf, r in zip(leaves, rewards):
             leaf.reward = r
         if mode == "simple":
-            AdvantageComputer._backprop_simple(root, leaves)
+            AdvantageComputer._backprop_simple(root, leaves, advantage_clip)
         elif mode == "branchgrpo":
-            AdvantageComputer._backprop_branchgrpo(root, leaves)
+            AdvantageComputer._backprop_branchgrpo(root, leaves, advantage_clip)
         else:
             raise ValueError(f"Unknown mode: {mode}")
 
     @staticmethod
-    def _backprop_simple(root: MCTSNode, leaves: List[MCTSNode]) -> None:
+    def _backprop_simple(
+        root: MCTSNode, leaves: List[MCTSNode], advantage_clip: float = 2.0
+    ) -> None:
         """Leaf advantage = reward - mean(rewards); internal = mean(children)."""
         mean_r = np.mean([leaf.reward for leaf in leaves])
         for leaf in leaves:
-            leaf.advantage = (leaf.reward or 0.0) - mean_r
+            a = (leaf.reward or 0.0) - mean_r
+            leaf.advantage = float(np.clip(a, -advantage_clip, advantage_clip))
 
         def _backprop(node: MCTSNode) -> float:
             if node.is_leaf() and node.advantage is not None:
@@ -41,14 +46,18 @@ class AdvantageComputer:
             if not node.children:
                 return 0.0
             child_advs = [_backprop(c) for c in node.children]
-            node.advantage = float(np.mean(child_advs))
+            a = float(np.mean(child_advs))
+            node.advantage = float(np.clip(a, -advantage_clip, advantage_clip))
             return node.advantage
 
         _backprop(root)
 
     @staticmethod
-    def _backprop_branchgrpo(root: MCTSNode, leaves: List[MCTSNode]) -> None:
-        """Path-weighted reward fusion, then depth-wise z-score normalization (BranchGRPO)."""
+    def _backprop_branchgrpo(
+        root: MCTSNode, leaves: List[MCTSNode], advantage_clip: float = 2.0
+    ) -> None:
+        """Path-weighted reward fusion, then depth-wise z-score normalization (BranchGRPO).
+        Advantages are clipped to [-advantage_clip, +advantage_clip] for stability (D-014)."""
         AdvantageComputer._fuse_rewards_path_weighted(root)
         nodes_by_depth: Dict[int, List[MCTSNode]] = {}
         AdvantageComputer._collect_by_depth(root, nodes_by_depth, 0)
@@ -60,7 +69,8 @@ class AdvantageComputer:
             std_d = float(np.std(fused)) + 1e-8
             for n in nodes:
                 if n.fused_reward is not None:
-                    n.advantage = (n.fused_reward - mean_d) / std_d
+                    a = (n.fused_reward - mean_d) / std_d
+                    n.advantage = float(np.clip(a, -advantage_clip, advantage_clip))
 
     @staticmethod
     def _fuse_rewards_path_weighted(node: MCTSNode) -> float:

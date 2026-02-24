@@ -92,6 +92,11 @@ class WeightedGRPOLoss:
                     ew = 0.0
                 else:
                     ew = (node.entropy or 0.0) / expected_h
+                # Clamp entropy weight for stability (D-014)
+                ew = max(
+                    getattr(self.config, "entropy_weight_min", 0.5),
+                    min(getattr(self.config, "entropy_weight_max", 2.0), ew),
+                )
                 trans = TreeTransition(
                     parent_state=node.state,
                     child_state=c.state,

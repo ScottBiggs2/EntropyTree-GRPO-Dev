@@ -134,7 +134,8 @@ class EntropyMCTSTrainer:
         ]
         rewards = [self.reward_fn(c, prompt) for c in completions]
         self.advantage_computer.compute_advantages(
-            root, leaves, rewards, mode="branchgrpo"
+            root, leaves, rewards, mode="branchgrpo",
+            advantage_clip=getattr(self.config, "advantage_clip", 2.0),
         )
 
         self.model.train()

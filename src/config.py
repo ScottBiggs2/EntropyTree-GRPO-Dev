@@ -20,6 +20,10 @@ class MCTSConfig:
     # Loss weighting — D-010
     alpha_time: float = 1.0
     alpha_entropy: float = 0.5
+    # Stability clamps (D-014): cap entropy weight and advantage magnitude
+    entropy_weight_min: float = 0.5
+    entropy_weight_max: float = 2.0
+    advantage_clip: float = 2.0
 
     # Model / generation
     total_denoising_steps: int = 256

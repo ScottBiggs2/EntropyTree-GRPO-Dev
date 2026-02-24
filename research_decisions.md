@@ -254,6 +254,24 @@ sampled = torch.multinomial(probs, num_samples=1)
 
 ---
 
+## D-014: Stability Clamps (Advantage Clip, Entropy Weight Clamp)
+
+| Field | Value |
+|-------|-------|
+| **Status** | `DECIDED` |
+| **Decision** | Clip advantages to `[-advantage_clip, +advantage_clip]` (default 2.0); clamp entropy weight \(w_{\mathrm{ent}} = H/\bar{H}\) to `[entropy_weight_min, entropy_weight_max]` (default 0.5 and 2.0). |
+| **Rationale** | Cloud test runs showed loss sign flips and unstable reward when (1) depth-wise advantages grew unbounded (few nodes per depth → large z-scores) and (2) entropy weight increased over training (model entropy at nodes rising), amplifying gradient scale. Clipping/clamping keeps the weighted GRPO signal bounded and stabilizes training. |
+
+**Details**:
+- **Advantage clip**: Applied in `AdvantageComputer` after depth-wise z-score; default `advantage_clip=2.0`. Config: `advantage_clip`.
+- **Entropy weight clamp**: Applied in `WeightedGRPOLoss._collect_transitions` when setting `entropy_weight` on each transition; default `[0.5, 2.0]`. Config: `entropy_weight_min`, `entropy_weight_max`.
+- Bug fix at same time: removed erroneous `+ 1e-8` on the advantage value in BranchGRPO (only std denominator keeps 1e-8).
+
+**Your Notes**:
+> _(paste responses here)_
+
+---
+
 ## Decision Log (Chronological)
 
 | Date | ID | Decision | Decided By |
@@ -266,3 +284,4 @@ sampled = torch.multinomial(probs, num_samples=1)
 | 2026-02-08 | D-005 | Mean Aggregation |Scott (Explore other Entropy Aggregation methods later?) |
 | 2026-02-08 | D-006 | `low_confidence` | Scott (Ablate these methods later) |
 | 2026-02-18 | D-013 | Single baseline: trajectory GRPO (no tree) | Plan (Phase 8) |
+| 2026-02-18 | D-014 | Stability clamps: advantage_clip=2, entropy_weight in [0.5, 2] | Cloud test analysis |
