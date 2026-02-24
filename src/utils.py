@@ -9,7 +9,9 @@ from src.config import MCTSConfig
 
 
 def get_device() -> str:
-    """M1 MacBook: MPS if available, else CPU. No CUDA (D-001)."""
+    """CUDA if available (cloud GPU), else MPS (Apple Silicon), else CPU (D-001: MPS/CPU on M1; add CUDA for cloud)."""
+    if torch.cuda.is_available():
+        return "cuda"
     if torch.backends.mps.is_available():
         return "mps"
     return "cpu"
@@ -118,7 +120,7 @@ def add_gumbel_noise(logits: torch.Tensor, temperature: float) -> torch.Tensor:
     """Gumbel-Max trick for stochastic sampling (dLLM / model card)."""
     if temperature == 0:
         return logits
-    # MPS (Apple Silicon) does not support float64; use float32 there
+    # MPS (Apple Silicon) does not support float64; use float32 there. CUDA supports float64.
     dtype = torch.float32 if logits.device.type == "mps" else torch.float64
     logits = logits.to(dtype)
     noise = torch.rand_like(logits, dtype=dtype, device=logits.device)

@@ -26,7 +26,7 @@ def test_mcts_config_defaults():
 
 def test_get_device():
     dev = get_device()
-    assert dev in ("mps", "cpu")
+    assert dev in ("cuda", "mps", "cpu")
 
 
 def test_create_masked_response_no_tokenizer_skip():

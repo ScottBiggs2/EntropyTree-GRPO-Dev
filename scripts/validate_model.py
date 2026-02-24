@@ -1,5 +1,5 @@
 """
-Phase 0: Validate model loads and generates on M1.
+Phase 0: Validate model loads and generates on M1 / cloud GPU.
 Uses model card reference logic: block-based denoising with Gumbel noise.
 """
 import sys
@@ -19,40 +19,7 @@ import torch.nn.functional as F
 import numpy as np
 from transformers import AutoTokenizer, AutoModelForMaskedLM
 
-
-def get_device() -> str:
-    """M1 MacBook: MPS if available, else CPU. No CUDA."""
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
-
-
-def add_gumbel_noise(logits: torch.Tensor, temperature: float) -> torch.Tensor:
-    """Gumbel-Max trick for stochastic sampling (dLLM / model card)."""
-    if temperature == 0:
-        return logits
-    # MPS (Apple Silicon) does not support float64; use float32 there
-    dtype = torch.float32 if logits.device.type == "mps" else torch.float64
-    logits = logits.to(dtype)
-    noise = torch.rand_like(logits, dtype=dtype, device=logits.device)
-    gumbel_noise = (-torch.log(noise + 1e-10)) ** temperature
-    return (logits.exp() + 1e-10) / (gumbel_noise + 1e-10)
-
-
-def get_num_transfer_tokens(
-    mask_index: torch.Tensor, steps: int, device: torch.device
-) -> torch.Tensor:
-    """How many masked tokens to unmask per step. [batch, steps]."""
-    mask_num = mask_index.sum(dim=1, keepdim=True)
-    base = (mask_num // steps).squeeze(1)
-    remainder = (mask_num % steps).squeeze(1)
-    num_transfer = torch.zeros(mask_num.size(0), steps, device=device, dtype=torch.int64)
-    for i in range(mask_num.size(0)):
-        num_transfer[i, :] = base[i]
-        r = int(remainder[i].item())
-        if r > 0:
-            num_transfer[i, :r] += 1
-    return num_transfer
+from src.utils import get_device, add_gumbel_noise, get_num_transfer_tokens
 
 
 @torch.no_grad()

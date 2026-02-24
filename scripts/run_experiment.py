@@ -182,14 +182,15 @@ def main():
     p.add_argument("--steps_per_expansion", type=int, default=16)
     p.add_argument("--max_new_tokens", type=int, default=64)
     p.add_argument("--num_baseline_samples", type=int, default=4)
+    p.add_argument("--device", type=str, default=None, help="Override device (cuda, mps, cpu); default auto-detect")
     args = p.parse_args()
 
     run_name = args.run_name or f"run_{int(time.time())}"
-    use_wandb = not args.no_wandb and os.environ.get("WANDB_API_KEY") is not None
+    use_wandb = not args.no_wandb
     if use_wandb:
-        print("WandB: enabled")
+        print("WandB: enabled (uses credentials from `wandb login` or WANDB_API_KEY)")
     else:
-        print("WandB: disabled (set WANDB_API_KEY or use --no_wandb)")
+        print("WandB: disabled (use --no_wandb to suppress this message)")
 
     config = MCTSConfig(
         num_epochs=args.num_epochs,
@@ -202,6 +203,7 @@ def main():
         steps_per_expansion=args.steps_per_expansion,
         max_new_tokens=args.max_new_tokens,
         num_baseline_samples=args.num_baseline_samples,
+        device=args.device,
     )
     prompts = load_prompts(args.prompts_file)
     print(f"Prompts: {len(prompts)}")

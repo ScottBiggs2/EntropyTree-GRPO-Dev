@@ -16,12 +16,6 @@ from src.utils import get_device, add_gumbel_noise
 from src.entropy import EntropyComputer
 
 
-def get_device():
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
-
-
 def main():
     import os
 

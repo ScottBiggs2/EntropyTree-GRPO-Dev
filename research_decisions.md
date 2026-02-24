@@ -22,11 +22,11 @@ Coding agents: treat `DECIDED` entries as ground truth. For `OPEN` entries, use 
 | Field | Value |
 |-------|-------|
 | **Status** | `DECIDED` |
-| **Decision** | Local M1 MacBook, MPS device with float32 fallback |
-| **Rationale** | 0.6B param model (~1.2GB BF16) fits comfortably. MPS has partial BF16 support but float32 is safer for correctness during development. Switch to BF16 for speed once validated. |
+| **Decision** | Local M1 MacBook, MPS device with float32 fallback; **CUDA when available** (e.g. cloud GPU) |
+| **Rationale** | 0.6B param model (~1.2GB BF16) fits comfortably. MPS has partial BF16 support but float32 is safer for correctness during development. **On cloud GPU, use CUDA (auto-detected via `get_device()`).** Switch to BF16 for speed once validated. |
 
 **Details**:
-- Device priority: `mps` > `cpu` (auto-detect)
+- Device priority: **cuda** (if available) > **mps** (Apple) > **cpu**
 - BF16 may produce NaN on some MPS ops; start float32, toggle later
 - **MPS does not support float64**: `add_gumbel_noise` uses float32 on MPS, float64 elsewhere (see `src/utils.py`, `scripts/validate_model.py`).
 - Batch size 1-2 for tree building (memory constrained during expansion)
