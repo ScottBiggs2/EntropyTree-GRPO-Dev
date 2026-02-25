@@ -116,14 +116,21 @@ One-shot: `python scripts/verify_real_model.py` runs all four steps and reports 
 ---
 ## Running experiments: 
 
+Dummy experiment:
 ```bash 
 python scripts/run_experiment.py --method baseline --num_epochs 10 --run_name 10_epoch_baseline_8 --num_baseline_samples 8 
 
 python scripts/run_experiment.py --method entropy_mcts --num_epochs 2 --run_name 2_epoch_retest
 
 python scripts/run_experiment.py --method entropy_mcts --num_epochs 10 --run_name 2_epoch_retest_smooth --max_tree_nodes 16 --branch_width 3 --steps_per_expansion 8 --num_baseline_samples 8 
-
 ```
+
+Intermediate experiment: 
+```bash
+python scripts/run_experiment_2.py --method baseline --num_epochs 2 --no_wandb
+python scripts/run_experiment_2.py --method entropy_mcts --num_epochs 2 --no_wandb
+```
+
 
 ---
 

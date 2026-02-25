@@ -21,10 +21,11 @@
 | 6 | ✅ Done | loss.py (transitions, log prob on changed positions, vocab_size arg), tests. |
 | 7 | ✅ Done | trainer.py, single_step_train.py, test_integration.py. **40 tests pass.** |
 | 7.5 | ✅ Done | Run Phase 0 + Phase 7 scripts with real HF model; fix HF-specific bugs. |
-| 8 | 🔜 Next | Baseline GRPO, run_experiment.py, HumanEval eval. (Start after 7.5.) |
-| 9 | Later | Ablations (after Phase 8). |
+| 8 | ✅ Done | Baseline GRPO, run_experiment.py, stability clamps (D-014). Heuristic reward only. |
+| 8.5 | 🔜 Next | **Intermediate automated reward**: execution-lite task to stress-test GRPO before LLM judge / EvalPlus. See Phase 8.5 below. |
+| 9 | Later | Ablations (after Phase 8.5). |
 
-**What's next:** Proceed to Phase 8 (baseline GRPO, run_experiment, HumanEval). Phase 8 uses **heuristic reward only**; see **Reward roadmap** (below Phase 8) for graduating to execution/EvalPlus when scaling up.
+**What's next:** Phase 8.5 — add a more challenging but still fully automated reward (sandboxed execution on a small prompt→test registry) to stress-test EntropyTree vs baseline before committing to LLM-as-judge or full EvalPlus.
 
 ---
 
@@ -662,16 +663,87 @@ Phase 8 uses **heuristic reward only** (D-008). When scaling model size and movi
 | Stage | Reward | When | Literature / tools |
 |-------|--------|------|--------------------|
 | **Phase 8** | SyntaxReward (AST + keywords + docstring) | Smoke test: validate pipeline, baseline vs entropy-MCTS | — |
-| **Post–Phase 8** | Execution-based: run code in sandbox, score by test outcomes | First serious runs (e.g. 0.5B→1B, HumanEval) | DiffuCoder (Apple): execution + EvalPlus, +4.4% on code; Flow-GRPO: GenEval 63%→95% |
+| **Phase 8.5** | **ExecutionLiteReward**: sandbox + prompt→test registry, fraction passed | Stress-test GRPO with correctness signal before LLM/EvalPlus | Minimal runner; 5–10 prompts, 3–5 tests each |
+| **Post–Phase 8.5** | Execution-based (full test suites, EvalPlus) | First serious runs (e.g. 0.5B→1B, HumanEval) | DiffuCoder: execution + EvalPlus; Flow-GRPO |
 | **Graduation** | EvalPlus (HumanEval with extended test cases) | Reporting comparable code benchmarks | DiffuCoder uses EvalPlus; same benchmark as community |
 | **Optional** | LLM-as-judge, or dense reward (per-test pass) | Ablations / variance reduction | D-008 alternatives; DiffuCoder’s Coupled-GRPO for variance reduction |
 
-**Concrete next steps (no code in Phase 8):**
-1. **Phase 8:** Ship with `SyntaxReward` only; document in run_experiment that reward is heuristic.
-2. **After Phase 8:** Implement sandboxed execution (e.g. subprocess + timeout, or existing safe-exec lib), plug in HumanEval test cases per problem, return fraction passed as reward. Replace or swap `RewardFunction` in trainer config.
-3. **For publication / scaling:** Switch to EvalPlus for evaluation and, if desired, for training reward; consider Coupled-GRPO (complementary mask noise) from DiffuCoder for stability.
+**Concrete next steps:**
+1. **Phase 8:** Ship with `SyntaxReward` only; document in run_experiment that reward is heuristic. ✅
+2. **Phase 8.5:** Implement ExecutionLiteReward (sandbox + prompt→test registry); stress-test baseline vs entropy-MCTS with correctness-based reward before LLM/EvalPlus. See Phase 8.5 section above.
+3. **After Phase 8.5:** Full execution-based reward (HumanEval/EvalPlus test cases per problem); replace or swap `RewardFunction` in trainer config.
+4. **For publication / scaling:** Switch to EvalPlus for evaluation and, if desired, for training reward; consider Coupled-GRPO (complementary mask noise) from DiffuCoder for stability.
 
 See **D-008** in `research_decisions.md` for status and alternatives (LLM-as-judge, etc.).
+
+---
+
+## Phase 8.5: Intermediate automated reward (pre–LLM judge)
+
+**Goal**: Add a more challenging GRPO task that still uses **100% automated** rewards, to stress-test EntropyTree vs baseline and validate the pipeline before scaling to LLM-as-judge or EvalPlus.  
+**Time**: ~1–2 days (sandbox + reward impl + small benchmark)  
+**Depends on**: Phase 8 (run_experiment, baseline vs entropy-MCTS comparison working)
+
+### Why this phase
+
+- **Phase 8** used `SyntaxReward` (AST + keywords + docstring) — good for smoke-testing; reward is easy to max out and doesn’t require correct behavior.
+- Before committing to **LLM-as-judge** or full **EvalPlus**, we want a task that:
+  - Is **harder** than syntax-only (model must produce *correct* behavior on some inputs).
+  - Stays **fully automated** (no API calls, no human labels).
+  - Gives a **richer reward signal** (e.g. fraction of tests passed) so we can see if EntropyTree improves sample efficiency or final reward more clearly than baseline.
+
+### Brainstorm: candidate tasks (all automated)
+
+| Idea | What | Pros | Cons |
+|------|------|------|------|
+| **A. Execution-lite** | Small registry: prompt → list of `(inputs, expected_output)`. Run completion in sandbox (subprocess + timeout); reward = fraction of tests passed. Optional: add small syntax/docstring bonus so partial credit exists. | Clear correctness signal; no external harness; easy to add prompts. | Need safe execution (timeout, no files/network). |
+| **B. Spec + inline tests** | Same as A but prompt includes a one-line spec (e.g. "Return True iff n is prime"). Reward = syntax + fraction of 3–5 fixed I/O tests passed. | Same as A; spec may help model. | Slightly more prompt engineering. |
+| **C. Mini benchmark slice** | Take 20–30 HumanEval/MBPP problems with simple I/O; use minimal runner (or EvalPlus subset). Reward = pass rate. | Closer to real benchmark. | More setup; may need EvalPlus or custom loader. |
+| **D. Style + correctness** | Combine: (1) syntax, (2) 2–3 execution tests, (3) simple style (e.g. no bare `except:`, has docstring). Reward = weighted sum. | Gradient of reward; good for GRPO. | More moving parts. |
+
+**Recommendation**: Implement **A (Execution-lite)** as the core: a small **prompt → test cases** registry (e.g. 5–10 prompts: `fibonacci`, `factorial`, `is_prime`, `sum_list`, etc.) with 3–5 `(args, expected)` pairs each. Sandboxed execution with timeout (e.g. 2s); reward = (# passed) / (# tests). Optionally add a **syntax bonus** (e.g. +0.1 if AST-parseable) so broken-but-parseable code gets non-zero reward. Later we can add B/C/D (more prompts, EvalPlus slice, or style terms).
+
+### Plan (slotted into scaffold)
+
+**Step 8.5.1: Sandboxed execution**
+
+- Add a small helper (e.g. in `src/rewards.py` or `src/execution.py`) that:
+  - Takes `(prompt, completion)` and a list of test cases `[(args, expected), ...]`.
+  - Builds a runnable snippet (e.g. prompt + completion in a single block; or prompt + completion and calls a fixed function with `args`).
+  - Runs in subprocess with timeout (e.g. 2s), catches errors → treat as 0 for that test.
+  - Returns (# passed) / (# tests) in [0, 1].
+- No file/network access; restrict to `exec` of the snippet in a clean process (or use a minimal safe-exec library if preferred).
+
+**Step 8.5.2: Prompt–test registry**
+
+- Add a small dataset (e.g. `data/execution_lite.json` or Python dict in code): each entry = `{ "prompt": "def fibonacci(n):", "function_name": "fibonacci", "tests": [ [0, 0], [1, 1], [5, 5], [10, 55] ] }`. Support both positional args and single-arg by convention.
+- 5–10 prompts covering: fibonacci, factorial, is_prime, sum_list, max_list, etc. Each with 3–5 tests.
+
+**Step 8.5.3: ExecutionLiteReward**
+
+- New reward class `ExecutionLiteReward(RewardFunction)` that:
+  - Looks up prompt in the registry (or uses a default 0.0 if unknown).
+  - Runs sandboxed execution on completion; reward = fraction passed.
+  - Optionally: if fraction passed &lt; 1.0 but completion is AST-parseable, add a small bonus (e.g. +0.05) so GRPO sees a gradient.
+- Plug into `run_experiment.py` via a flag or config (e.g. `--reward execution_lite`).
+
+**Step 8.5.4: Run and compare**
+
+- Add a small **execution-lite prompt list** (e.g. `prompts_execution_lite.txt` or pulled from registry).
+- Run baseline vs entropy_mcts for a few epochs with `ExecutionLiteReward`; compare learning curves (reward, stability, sample efficiency).
+- Document in README or `cloud_test.md`: "Phase 8.5 uses execution-lite reward; Phase 8 uses SyntaxReward."
+
+**Step 8.5.5: Optional — blend with syntax**
+
+- Optional: `BlendedReward(syntax_weight=0.2, execution_weight=0.8)` that combines SyntaxReward and ExecutionLiteReward so that syntax-only solutions get a small reward and the bulk of the signal is correctness.
+
+### Verification checklist (Phase 8.5)
+
+- [ ] Sandbox runs completion with timeout; no hang on infinite loops; errors return 0 for that test.
+- [ ] Registry has at least 5 prompts with 3+ tests each; reward is in [0, 1].
+- [ ] `run_experiment.py --reward execution_lite` (or equivalent) trains both baseline and entropy_mcts with ExecutionLiteReward.
+- [ ] Learning curves show non-trivial reward growth (not maxed in 1 epoch); EntropyTree vs baseline can be compared meaningfully.
+- [ ] No LLM or human in the loop; reward is deterministic given (prompt, completion).
 
 ---
 
@@ -714,7 +786,9 @@ Phase 0 (env setup)
   │           │
   │           └── Phase 8 (experiments)
   │                 │
-  │                 └── Phase 9 (ablations)
+  │                 └── Phase 8.5 (intermediate automated reward)
+  │                       │
+  │                       └── Phase 9 (ablations)
 ```
 
 **Parallelizable work**:
