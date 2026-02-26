@@ -243,7 +243,7 @@ def main():
         run_baseline(config, prompts, run_name, args.checkpoint_dir, args.save_every_steps, use_wandb, reward_fn)
     else:
         run_entropy_mcts(config, prompts, run_name, args.checkpoint_dir, args.save_every_steps, use_wandb, reward_fn)
-
+ 
 
 if __name__ == "__main__":
     main()
