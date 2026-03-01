@@ -1,37 +1,17 @@
 [
-  {
-    "prompt": "def fibonacci(n):",
-    "function_name": "fibonacci",
-    "tests": [[0, 0], [1, 1], [2, 1], [5, 5], [10, 55]]
-  },
-  {
-    "prompt": "def factorial(n):",
-    "function_name": "factorial",
-    "tests": [[0, 1], [1, 1], [2, 2], [5, 120], [6, 720]]
-  },
-  {
-    "prompt": "def is_prime(n):",
-    "function_name": "is_prime",
-    "tests": [[2, true], [3, true], [4, false], [17, true], [25, false]]
-  },
-  {
-    "prompt": "def sum_list(lst):",
-    "function_name": "sum_list",
-    "tests": [[[], 0], [[1, 2, 3], 6], [[10], 10], [[1, -1], 0]]
-  },
-  {
-    "prompt": "def max_list(lst):",
-    "function_name": "max_list",
-    "tests": [[[1, 2, 3], 3], [[42], 42], [[-1, -2], -1], [[0, 0], 0]]
-  },
-  {
-    "prompt": "def is_even(n):",
-    "function_name": "is_even",
-    "tests": [[0, true], [1, false], [2, true], [10, true], [-3, false]]
-  },
-  {
-    "prompt": "def power(base, exp):",
-    "function_name": "power",
-    "tests": [[2, 0, 1], [2, 3, 8], [5, 2, 25], [10, 1, 10]]
-  }
+  {"prompt": "def fibonacci(n):", "function_name": "fibonacci", "tests": [[0, 0], [1, 1], [2, 1], [5, 5], [10, 55]]},
+  {"prompt": "def factorial(n):", "function_name": "factorial", "tests": [[0, 1], [1, 1], [2, 2], [5, 120], [6, 720]]},
+  {"prompt": "def is_prime(n):", "function_name": "is_prime", "tests": [[2, true], [3, true], [4, false], [17, true], [25, false]], "eval": true},
+  {"prompt": "def sum_list(lst):", "function_name": "sum_list", "tests": [[[], 0], [[1, 2, 3], 6], [[10], 10], [[1, -1], 0]]},
+  {"prompt": "def max_list(lst):", "function_name": "max_list", "tests": [[[1, 2, 3], 3], [[42], 42], [[-1, -2], -1], [[0, 0], 0]]},
+  {"prompt": "def min_list(lst):", "function_name": "min_list", "tests": [[[1, 2, 3], 1], [[42], 42], [[-1, -2], -2], [[5, 3, 9], 3]]},
+  {"prompt": "def is_even(n):", "function_name": "is_even", "tests": [[0, true], [1, false], [2, true], [10, true], [-3, false]]},
+  {"prompt": "def is_odd(n):", "function_name": "is_odd", "tests": [[0, false], [1, true], [2, false], [7, true], [-2, false]]},
+  {"prompt": "def power(base, exp):", "function_name": "power", "tests": [[2, 0, 1], [2, 3, 8], [5, 2, 25], [10, 1, 10]]},
+  {"prompt": "def sort_list(lst):", "function_name": "sort_list", "tests": [[[3, 1, 2], [1, 2, 3]], [[1], [1]], [[5, 2, 8, 2], [2, 2, 5, 8]], [[], []]], "eval": true},
+  {"prompt": "def count_evens(lst):", "function_name": "count_evens", "tests": [[[], 0], [[1, 2, 3, 4], 2], [[2, 4, 6], 3], [[1, 3, 5], 0]]},
+  {"prompt": "def find_max_index(lst):", "function_name": "find_max_index", "tests": [[[1, 2, 3], 2], [[42], 0], [[3, 1, 3], 0], [[-1, -2], 0]]},
+  {"prompt": "def reverse_list(lst):", "function_name": "reverse_list", "tests": [[[1, 2, 3], [3, 2, 1]], [[1], [1]], [[], []]]},
+  {"prompt": "def second_largest(lst):", "function_name": "second_largest", "tests": [[[1, 2, 3], 2], [[4, 4, 2], 4], [[10, 9, 8], 9], [[1, 2], 1]]},
+  {"prompt": "def contains_duplicate(lst):", "function_name": "contains_duplicate", "tests": [[[1, 2, 3], false], [[1, 2, 1], true], [[], false], [[7, 7], true]]}
 ]

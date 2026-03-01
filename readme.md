@@ -131,6 +131,8 @@ python scripts/run_experiment_2.py --method baseline --num_epochs 2 --no_wandb
 python scripts/run_experiment_2.py --method entropy_mcts --num_epochs 2 --no_wandb
 ```
 
+**Phase 8.5 execution-lite (no env/requirements changes):** The execution-lite reward runs model-generated code in a **subprocess** using only the Python standard library (`scripts/run_execution_sandbox.py` uses `json` and `sys`). No extra pip packages are required. Run from the **repo root** so the script finds `scripts/run_execution_sandbox.py` and `data/execution_lite.json` (e.g. `run_experiment_2.sh` does `cd` to the project dir). If your default `python` is not the same interpreter as the one running the experiment (e.g. on some clusters), set `PYTHON` to the desired binary: `export PYTHON=python3` or `export PYTHON=/path/to/conda/env/bin/python`.
+
 
 ---
 

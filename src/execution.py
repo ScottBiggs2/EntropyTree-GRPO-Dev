@@ -107,12 +107,49 @@ def load_registry(path: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
         func = item.get("function_name")
         tests = item.get("tests", [])
         if prompt and func and tests:
-            registry[prompt] = {"function_name": func, "tests": tests}
+            is_eval = bool(item.get("eval", False))
+            registry[prompt] = {"function_name": func, "tests": tests, "eval": is_eval}
     return registry
 
 
+def get_train_prompts_from_registry(path: Optional[str] = None) -> List[str]:
+    """Return list of training prompts (entries with eval != true) in registry order."""
+    if path is None:
+        root = Path(__file__).resolve().parents[1]
+        path = root / "data" / "execution_lite.json"
+    path = Path(path)
+    if not path.exists():
+        return []
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except Exception:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [str(item.get("prompt", "")).strip() for item in data if item.get("prompt") and not item.get("eval", False)]
+
+
+def get_eval_prompts_from_registry(path: Optional[str] = None) -> List[str]:
+    """Return list of eval prompts (entries with \"eval\": true) for held-out evaluation."""
+    if path is None:
+        root = Path(__file__).resolve().parents[1]
+        path = root / "data" / "execution_lite.json"
+    path = Path(path)
+    if not path.exists():
+        return []
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except Exception:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [str(item.get("prompt", "")).strip() for item in data if item.get("prompt") and item.get("eval", False)]
+
+
 def get_prompts_from_registry(path: Optional[str] = None) -> List[str]:
-    """Return list of prompts in registry order (for run_experiment_2 default prompts)."""
+    """Return list of all prompts in registry order. For training use get_train_prompts_from_registry."""
     if path is None:
         root = Path(__file__).resolve().parents[1]
         path = root / "data" / "execution_lite.json"

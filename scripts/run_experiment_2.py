@@ -27,24 +27,76 @@ from src.rewards import ExecutionLiteReward
 from src.advantages import AdvantageComputer
 from src.loss import WeightedGRPOLoss
 from src.trainer import BaselineGRPOTrainer, EntropyMCTSTrainer
-from src.execution import get_prompts_from_registry
+from src.tree_builder import EntropyGuidedTreeBuilder
+from src.execution import get_train_prompts_from_registry, get_eval_prompts_from_registry
 
 BASELINE_CHECKPOINT_SUBDIR = "baseline_grpo"
 ENTROPY_MCTS_CHECKPOINT_SUBDIR = "entropy_mcts_grpo"
 
 
+def execution_sanity_check(reward_fn: ExecutionLiteReward, use_wandb: bool) -> bool:
+    """Run reward on a known-good completion; log to WandB if enabled. Returns True if reward > 0 (execution path works)."""
+    prompt = "def fibonacci(n):"
+    completion = "    if n <= 1:\n        return n\n    return fibonacci(n - 1) + fibonacci(n - 2)"
+    r = reward_fn(completion, prompt)
+    ok = r > 0.0
+    if use_wandb:
+        try:
+            import wandb
+            wandb.log({"execution_lite_sanity_check": 1.0 if ok else 0.0, "execution_lite_sanity_reward": r}, step=0)
+        except Exception:
+            pass
+    status = "OK" if ok else "FAIL"
+    print(f"[sanity check] ExecutionLiteReward on known fibonacci completion -> reward={r} ({status})")
+    return ok
+
+
+def run_eval(
+    model: torch.nn.Module,
+    tokenizer,
+    config: MCTSConfig,
+    reward_fn: ExecutionLiteReward,
+    eval_prompts: List[str],
+    step: int,
+    use_wandb: bool,
+) -> None:
+    """Generate one completion per eval prompt, compute rewards, log eval/reward_* to WandB."""
+    if not eval_prompts:
+        return
+    model.eval()
+    ec = EntropyComputer()
+    tree_builder = EntropyGuidedTreeBuilder(model, tokenizer, config, ec)
+    rewards: List[float] = []
+    with torch.no_grad():
+        for prompt in eval_prompts:
+            completion, _ = tree_builder.generate_one_trajectory(prompt)
+            r = reward_fn(completion, prompt)
+            rewards.append(r)
+    if use_wandb:
+        try:
+            import wandb
+            wandb.log({
+                "eval/reward_mean": sum(rewards) / len(rewards),
+                "eval/reward_max": max(rewards),
+                "eval/reward_min": min(rewards),
+                "eval/n_prompts": len(eval_prompts),
+            }, step=step)
+        except Exception:
+            pass
+    print(f"[eval] held-out prompts={len(eval_prompts)} reward_mean={sum(rewards)/len(rewards):.4f} reward_max={max(rewards):.4f}")
+
+
 def load_prompts(prompts_file: Optional[str], registry_path: Optional[str] = None) -> List[str]:
-    """Load prompts: from file if given, else from execution_lite registry. Fallback to small default list."""
+    """Load training prompts: from file if given, else from registry (train-only, no eval). Fallback to small default list."""
     if prompts_file and Path(prompts_file).exists():
         with open(prompts_file) as f:
             return [line.strip() for line in f if line.strip()]
-    prompts = get_prompts_from_registry(registry_path)
+    prompts = get_train_prompts_from_registry(registry_path)
     if prompts:
         return prompts
     return [
         "def fibonacci(n):",
         "def factorial(n):",
-        "def is_prime(n):",
         "def sum_list(lst):",
         "def max_list(lst):",
     ]
@@ -58,11 +110,16 @@ def run_baseline(
     save_every_steps: Optional[int],
     use_wandb: bool,
     reward_fn: ExecutionLiteReward,
+    eval_prompts: Optional[List[str]] = None,
+    eval_interval: int = 1,
 ) -> None:
     save_dir = Path(checkpoint_dir) / BASELINE_CHECKPOINT_SUBDIR / run_name
     save_dir.mkdir(parents=True, exist_ok=True)
     print(f"[baseline] Checkpoints: {save_dir}")
     print(f"[baseline] Reward: ExecutionLiteReward (registry, timeout={reward_fn.timeout}s)")
+
+    if not execution_sanity_check(reward_fn, use_wandb):
+        print("[baseline] WARNING: execution sanity check failed; rewards may be 0")
 
     model, tokenizer = load_model_and_tokenizer(config)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
@@ -95,6 +152,8 @@ def run_baseline(
         if use_wandb:
             wandb.log(epoch_metrics, step=global_step)
         global_step += len(prompts)
+        if eval_prompts and (epoch + 1) % eval_interval == 0:
+            run_eval(model, tokenizer, config, reward_fn, eval_prompts, global_step, use_wandb)
         if save_every_steps and global_step % save_every_steps == 0:
             ckpt_path = save_dir / f"step_{global_step}.pt"
             torch.save({"model": model.state_dict(), "optimizer": optimizer.state_dict(), "step": global_step}, ckpt_path)
@@ -107,6 +166,8 @@ def run_baseline(
     with open(save_dir / "config.json", "w") as f:
         json.dump({k: str(v) if not isinstance(v, (int, float, bool)) else v for k, v in vars(config).items()}, f, indent=2)
     print(f"[baseline] Saved final.pt and config.json to {save_dir}")
+    if eval_prompts:
+        run_eval(model, tokenizer, config, reward_fn, eval_prompts, global_step, use_wandb)
     if use_wandb:
         wandb.finish()
 
@@ -119,11 +180,16 @@ def run_entropy_mcts(
     save_every_steps: Optional[int],
     use_wandb: bool,
     reward_fn: ExecutionLiteReward,
+    eval_prompts: Optional[List[str]] = None,
+    eval_interval: int = 1,
 ) -> None:
     save_dir = Path(checkpoint_dir) / ENTROPY_MCTS_CHECKPOINT_SUBDIR / run_name
     save_dir.mkdir(parents=True, exist_ok=True)
     print(f"[entropy_mcts] Checkpoints: {save_dir}")
     print(f"[entropy_mcts] Reward: ExecutionLiteReward (registry, timeout={reward_fn.timeout}s)")
+
+    if not execution_sanity_check(reward_fn, use_wandb):
+        print("[entropy_mcts] WARNING: execution sanity check failed; rewards may be 0")
 
     model, tokenizer = load_model_and_tokenizer(config)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
@@ -177,7 +243,8 @@ def run_entropy_mcts(
         epoch_metrics["method"] = "entropy_mcts"
         epoch_metrics["reward"] = "execution_lite"
         print(f"[entropy_mcts] epoch {epoch} " + " ".join(f"{k}={v}" for k, v in epoch_metrics.items()))
-
+        if eval_prompts and (epoch + 1) % eval_interval == 0:
+            run_eval(model, tokenizer, config, reward_fn, eval_prompts, global_step, use_wandb)
     torch.save(
         {"model": model.state_dict(), "optimizer": optimizer.state_dict(), "step": global_step},
         save_dir / "final.pt",
@@ -185,6 +252,8 @@ def run_entropy_mcts(
     with open(save_dir / "config.json", "w") as f:
         json.dump({k: str(v) if not isinstance(v, (int, float, bool)) else v for k, v in vars(config).items()}, f, indent=2)
     print(f"[entropy_mcts] Saved final.pt and config.json to {save_dir}")
+    if eval_prompts:
+        run_eval(model, tokenizer, config, reward_fn, eval_prompts, global_step, use_wandb)
     if use_wandb:
         wandb.finish()
 
@@ -197,6 +266,7 @@ def main():
     p.add_argument("--registry", type=str, default=None, help="Path to execution_lite.json; default = data/execution_lite.json")
     p.add_argument("--exec_timeout", type=float, default=2.0, help="Sandbox run timeout (seconds)")
     p.add_argument("--syntax_bonus", type=float, default=0.05, help="Extra reward for AST-parseable when not all tests pass")
+    p.add_argument("--eval_interval", type=int, default=1, help="Run held-out eval every N epochs and log to WandB")
     p.add_argument("--checkpoint_dir", type=str, default="checkpoints")
     p.add_argument("--run_name", type=str, default=None)
     p.add_argument("--wandb_project", type=str, default="entropy-tree-grpo")
@@ -231,7 +301,10 @@ def main():
         device=args.device,
     )
     prompts = load_prompts(args.prompts_file, args.registry)
-    print(f"Prompts: {len(prompts)} (Phase 8.5 execution-lite)")
+    eval_prompts = get_eval_prompts_from_registry(args.registry)
+    print(f"Train prompts: {len(prompts)} (Phase 8.5 execution-lite)")
+    if eval_prompts:
+        print(f"Eval prompts (held-out): {len(eval_prompts)} -> logged as eval/reward_* every {args.eval_interval} epoch(s)")
 
     reward_fn = ExecutionLiteReward(
         registry_path=args.registry,
@@ -240,9 +313,9 @@ def main():
     )
 
     if args.method == "baseline":
-        run_baseline(config, prompts, run_name, args.checkpoint_dir, args.save_every_steps, use_wandb, reward_fn)
+        run_baseline(config, prompts, run_name, args.checkpoint_dir, args.save_every_steps, use_wandb, reward_fn, eval_prompts=eval_prompts or None, eval_interval=args.eval_interval)
     else:
-        run_entropy_mcts(config, prompts, run_name, args.checkpoint_dir, args.save_every_steps, use_wandb, reward_fn)
+        run_entropy_mcts(config, prompts, run_name, args.checkpoint_dir, args.save_every_steps, use_wandb, reward_fn, eval_prompts=eval_prompts or None, eval_interval=args.eval_interval)
  
 
 if __name__ == "__main__":

@@ -38,7 +38,8 @@ class SyntaxReward(RewardFunction):
 
 class ExecutionLiteReward(RewardFunction):
     """Phase 8.5: Sandboxed execution against a prompt→test registry; reward = fraction of tests passed.
-    Optional small syntax bonus if AST-parseable and not all tests passed (gradient signal)."""
+    Implemented via: run_tests() in src.execution (subprocess to scripts/run_execution_sandbox.py),
+    registry in data/execution_lite.json. Optional small syntax bonus if AST-parseable and not all tests passed."""
 
     def __init__(
         self,
