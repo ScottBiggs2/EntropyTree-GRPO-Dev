@@ -30,3 +30,5 @@ checkpoints/
 Thumbs.db
 *.swp
 *.swo
+
+reference_job.sh
