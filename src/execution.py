@@ -11,20 +11,22 @@ from typing import Any, Dict, List, Optional, Tuple
 # Default timeout for running one completion's tests (seconds)
 EXECUTION_TIMEOUT = 2
 
-# Path to the sandbox runner script (relative to repo root)
-RUNNER_SCRIPT = "scripts/run_execution_sandbox.py"
+RUNNER_SCRIPT_NAME = "run_execution_sandbox.py"
 
 
-def _runner_script_path() -> Path:
-    """Resolve runner script path from repo root (where we run experiments)."""
-    # When running as python scripts/run_experiment_2.py, cwd is typically repo root
+def _runner_script_path(project_root: Optional[Path] = None) -> Path:
+    """Resolve path to the sandbox runner script. Prefer project_root if provided (so cwd doesn't matter)."""
+    if project_root is not None:
+        p = project_root / "scripts" / RUNNER_SCRIPT_NAME
+        if p.exists():
+            return p
+    # Fallback: cwd then relative to this file
     root = Path.cwd()
-    path = root / RUNNER_SCRIPT
-    if not path.exists():
-        # Try relative to this file
-        root = Path(__file__).resolve().parents[1]
-        path = root / RUNNER_SCRIPT
-    return path
+    p = root / "scripts" / RUNNER_SCRIPT_NAME
+    if p.exists():
+        return p
+    root = Path(__file__).resolve().parents[1]
+    return root / "scripts" / RUNNER_SCRIPT_NAME
 
 
 def run_tests(
@@ -33,21 +35,21 @@ def run_tests(
     function_name: str,
     tests: List[Any],
     timeout: float = EXECUTION_TIMEOUT,
+    project_root: Optional[Path] = None,
 ) -> float:
     """
     Run completion in a subprocess with the given tests.
     Returns fraction of tests passed in [0, 1]. Returns 0.0 on timeout, crash, or missing function.
-    tests: list of [arg1, ..., expected] (single-arg: [arg, expected]; multi-arg: [a, b, expected]).
+    project_root: if set, used to find scripts/run_execution_sandbox.py so cwd doesn't matter.
     """
     if not tests:
         return 0.0
     code = (prompt + "\n" + completion).strip()
     if not code.strip():
         return 0.0
-    # Normalize to list of lists for JSON
     tests_serializable = [t if isinstance(t, list) else list(t) for t in tests]
     config = {"function_name": function_name, "tests": tests_serializable}
-    runner = _runner_script_path()
+    runner = _runner_script_path(project_root)
     if not runner.exists():
         return 0.0
     try:
@@ -63,7 +65,7 @@ def run_tests(
                 capture_output=True,
                 text=True,
                 timeout=timeout,
-                cwd=Path.cwd(),
+                cwd=str(project_root) if project_root is not None else None,
             )
             out = (result.stdout or "").strip()
             if result.returncode != 0 or not out:

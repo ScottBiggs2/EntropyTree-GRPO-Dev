@@ -2,6 +2,7 @@
 
 import ast
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Dict, Optional
 
 from src.execution import load_registry, run_tests
@@ -46,10 +47,12 @@ class ExecutionLiteReward(RewardFunction):
         registry_path: Optional[str] = None,
         syntax_bonus: float = 0.05,
         timeout: float = 2.0,
+        project_root: Optional[Path] = None,
     ):
         self.registry_path = registry_path
         self.syntax_bonus = syntax_bonus
         self.timeout = timeout
+        self.project_root = Path(project_root) if project_root is not None else None
         self._registry: Optional[Dict] = None
 
     def _get_registry(self) -> Dict:
@@ -73,6 +76,7 @@ class ExecutionLiteReward(RewardFunction):
             function_name=func_name,
             tests=tests,
             timeout=self.timeout,
+            project_root=self.project_root,
         )
         if frac >= 1.0:
             return 1.0

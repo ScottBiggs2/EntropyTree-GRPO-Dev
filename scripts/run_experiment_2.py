@@ -306,11 +306,36 @@ def main():
     if eval_prompts:
         print(f"Eval prompts (held-out): {len(eval_prompts)} -> logged as eval/reward_* every {args.eval_interval} epoch(s)")
 
+    # Use absolute paths so reward works regardless of cwd (e.g. on clusters)
+    registry_path = args.registry
+    if not registry_path or not Path(registry_path).is_absolute():
+        registry_path = str(ROOT / "data" / "execution_lite.json")
+    project_root = ROOT
+    if not Path(registry_path).exists():
+        print(f"ERROR: Registry not found at {registry_path}. Rewards will be 0.")
+        sys.exit(1)
+    from src.execution import load_registry
+    _reg = load_registry(registry_path)
+    if not _reg:
+        print(f"ERROR: Registry at {registry_path} is empty or invalid. Rewards will be 0.")
+        sys.exit(1)
+    runner = project_root / "scripts" / "run_execution_sandbox.py"
+    if not runner.exists():
+        print(f"ERROR: Sandbox runner not found at {runner}. Rewards will be 0.")
+        sys.exit(1)
+    print(f"Registry: {registry_path} ({len(_reg)} prompts)")
+    print(f"Runner: {runner}")
+
     reward_fn = ExecutionLiteReward(
-        registry_path=args.registry,
+        registry_path=registry_path,
         syntax_bonus=args.syntax_bonus,
         timeout=args.exec_timeout,
+        project_root=project_root,
     )
+
+    if not execution_sanity_check(reward_fn, use_wandb):
+        print("ERROR: Execution reward sanity check failed (known-good completion got 0). Fix registry/runner/cwd and retry.")
+        sys.exit(1)
 
     if args.method == "baseline":
         run_baseline(config, prompts, run_name, args.checkpoint_dir, args.save_every_steps, use_wandb, reward_fn, eval_prompts=eval_prompts or None, eval_interval=args.eval_interval)
