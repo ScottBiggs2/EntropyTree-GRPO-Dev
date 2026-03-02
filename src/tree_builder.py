@@ -27,6 +27,7 @@ class EntropyGuidedTreeBuilder:
         self.entropy_computer = entropy_computer
         self.device = config.device or next(model.parameters()).device
         self.mask_id = tokenizer.mask_token_id
+        self.vocab_size = getattr(tokenizer, "vocab_size", None) or len(tokenizer)
         self._entropy_diagnostic_logged = False
         self.pad_id = (
             tokenizer.pad_token_id
@@ -128,14 +129,33 @@ class EntropyGuidedTreeBuilder:
     def _expand_node(self, node: MCTSNode) -> List[MCTSNode]:
         """Create branch_width children by stochastic _denoise_chunk."""
         children: List[MCTSNode] = []
+        temp = self._node_temperature(node)
         for _ in range(self.config.branch_width):
-            child = self._denoise_chunk(node, self.config.steps_per_expansion)
+            child = self._denoise_chunk(node, self.config.steps_per_expansion, temp)
             child.sampling_prob = 1.0 / self.config.branch_width
             child.depth = node.depth + 1
             children.append(child)
         return children
 
-    def _denoise_chunk(self, node: MCTSNode, num_steps: int) -> MCTSNode:
+    def _node_temperature(self, node: MCTSNode) -> float:
+        """
+        Adaptive temperature: higher entropy → higher temperature → more stochastic sampling.
+        Uses node.entropy vs. expected_entropy(masking_ratio, vocab_size) as an uncertainty ratio.
+        """
+        base_temp = self.config.temperature
+        if node.entropy is None:
+            return base_temp
+        masking_ratio = node.masking_ratio()
+        expected_h = self.entropy_computer.expected_entropy(
+            masking_ratio, vocab_size=self.vocab_size
+        )
+        if expected_h < 1e-6:
+            return base_temp
+        uncertainty_ratio = float(node.entropy) / float(expected_h)
+        temperature = base_temp * (0.7 + 0.6 * uncertainty_ratio)
+        return max(0.5, min(1.3, temperature))
+
+    def _denoise_chunk(self, node: MCTSNode, num_steps: int, temperature: float) -> MCTSNode:
         """Run num_steps denoising steps from node; return new child node."""
         state = node.state.clone()
         attn = node.attention_mask.clone()
@@ -161,7 +181,7 @@ class EntropyGuidedTreeBuilder:
                 logits = self.model(
                     state.unsqueeze(0), attention_mask=attn.unsqueeze(0)
                 ).logits[0]
-                logits_n = add_gumbel_noise(logits, self.config.temperature)
+                logits_n = add_gumbel_noise(logits, temperature)
                 x0_pred = torch.argmax(logits_n, dim=-1)
                 probs = F.softmax(logits, dim=-1)
                 conf = torch.gather(
@@ -216,6 +236,7 @@ class EntropyGuidedTreeBuilder:
         response_region[prompt_len : prompt_len + max_new] = True
 
         with torch.no_grad():
+            temperature = self._node_temperature(node)
             while True:
                 mask_now = (state == self.mask_id) & response_region
                 n_masked = mask_now.sum().item()
@@ -225,7 +246,7 @@ class EntropyGuidedTreeBuilder:
                 logits = self.model(
                     state.unsqueeze(0), attention_mask=attn.unsqueeze(0)
                 ).logits[0]
-                logits_n = add_gumbel_noise(logits, self.config.temperature)
+                logits_n = add_gumbel_noise(logits, temperature)
                 x0_pred = torch.argmax(logits_n, dim=-1)
                 probs = F.softmax(logits, dim=-1)
                 conf = torch.gather(
@@ -261,6 +282,9 @@ class EntropyGuidedTreeBuilder:
         transitions: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
 
         with torch.no_grad():
+            # Baseline GRPO path does not build a full tree, so we don't have node.entropy.
+            # Use the global base temperature here.
+            temperature = self.config.temperature
             while True:
                 mask_now = (state == self.mask_id) & response_region
                 n_masked = mask_now.sum().item()
@@ -272,7 +296,7 @@ class EntropyGuidedTreeBuilder:
                 logits = self.model(
                     state.unsqueeze(0), attention_mask=attn.unsqueeze(0)
                 ).logits[0]
-                logits_n = add_gumbel_noise(logits, self.config.temperature)
+                logits_n = add_gumbel_noise(logits, temperature)
                 x0_pred = torch.argmax(logits_n, dim=-1)
                 probs = F.softmax(logits, dim=-1)
                 conf = torch.gather(
