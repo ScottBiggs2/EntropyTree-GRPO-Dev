@@ -40,19 +40,32 @@ class SyntaxReward(RewardFunction):
 class ExecutionLiteReward(RewardFunction):
     """Phase 8.5: Sandboxed execution against a prompt→test registry; reward = fraction of tests passed.
     Implemented via: run_tests() in src.execution (subprocess to scripts/run_execution_sandbox.py),
-    registry in data/execution_lite.json. Optional small syntax bonus if AST-parseable and not all tests passed."""
+    registry in data/execution_lite.json.
+
+    Dense reward shaping ensures GRPO gets gradient signal even before the model
+    produces fully correct code.  Reward breakdown (approximate):
+      - Tests passed fraction:  up to 0.80 (the primary signal)
+      - AST-parseable:          +0.05
+      - Contains "def " + "return ":  +0.05
+      - Contains function name: +0.02
+      - Contains "if " or "for ": +0.02
+      - Indented code present:  +0.02
+    Capped at 1.0.  All tests passed → exactly 1.0 (no shaping needed).
+    """
+
+    TESTS_WEIGHT = 0.80
 
     def __init__(
         self,
         registry_path: Optional[str] = None,
-        syntax_bonus: float = 0.05,
         timeout: float = 2.0,
         project_root: Optional[Path] = None,
+        syntax_bonus: float = 0.05,
     ):
         self.registry_path = registry_path
-        self.syntax_bonus = syntax_bonus
         self.timeout = timeout
         self.project_root = Path(project_root) if project_root is not None else None
+        self.syntax_bonus = syntax_bonus
         self._registry: Optional[Dict] = None
 
     def _get_registry(self) -> Dict:
@@ -70,6 +83,7 @@ class ExecutionLiteReward(RewardFunction):
         entry = registry[key]
         func_name = entry["function_name"]
         tests = entry["tests"]
+
         frac = run_tests(
             prompt=prompt,
             completion=completion,
@@ -78,14 +92,32 @@ class ExecutionLiteReward(RewardFunction):
             timeout=self.timeout,
             project_root=self.project_root,
         )
+
         if frac >= 1.0:
             return 1.0
+
+        reward = frac * self.TESTS_WEIGHT
+        reward += self._shaping_bonus(completion, func_name)
+        return min(1.0, reward)
+
+    def _shaping_bonus(self, completion: str, func_name: str) -> float:
+        """Lightweight text-based bonuses that create reward variance across
+        completions so GRPO has gradient signal even when no tests pass."""
+        bonus = 0.0
         try:
             ast.parse(completion)
-            frac = min(1.0, frac + self.syntax_bonus)
+            bonus += 0.05
         except SyntaxError:
             pass
-        return frac
+        if "def " in completion and "return " in completion:
+            bonus += 0.05
+        if func_name in completion:
+            bonus += 0.02
+        if "if " in completion or "for " in completion:
+            bonus += 0.02
+        if any(line.startswith(("    ", "\t")) for line in completion.splitlines()):
+            bonus += 0.02
+        return bonus
 
 
 class ExecutionReward(RewardFunction):

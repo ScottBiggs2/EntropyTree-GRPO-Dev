@@ -41,14 +41,22 @@ def run_tests(
     Run completion in a subprocess with the given tests.
     Returns fraction of tests passed in [0, 1]. Returns 0.0 on timeout, crash, or missing function.
     project_root: if set, used to find scripts/run_execution_sandbox.py so cwd doesn't matter.
+
+    The sandbox tries multiple code construction strategies (completion alone,
+    prompt+completion, markdown extraction, regex extraction) so that the reward
+    works regardless of whether the model emits a bare function body, a full
+    function definition, or markdown-wrapped code.
     """
     if not tests:
         return 0.0
-    code = (prompt + "\n" + completion).strip()
-    if not code.strip():
+    if not completion or not completion.strip():
         return 0.0
     tests_serializable = [t if isinstance(t, list) else list(t) for t in tests]
-    config = {"function_name": function_name, "tests": tests_serializable}
+    config = {
+        "function_name": function_name,
+        "tests": tests_serializable,
+        "prompt": prompt,
+    }
     runner = _runner_script_path(project_root)
     if not runner.exists():
         return 0.0
@@ -61,7 +69,7 @@ def run_tests(
         try:
             result = subprocess.run(
                 [os.environ.get("PYTHON", "python"), str(runner), config_path],
-                input=code,
+                input=completion,
                 capture_output=True,
                 text=True,
                 timeout=timeout,

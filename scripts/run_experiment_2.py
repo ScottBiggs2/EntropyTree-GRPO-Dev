@@ -35,19 +35,33 @@ ENTROPY_MCTS_CHECKPOINT_SUBDIR = "entropy_mcts_grpo"
 
 
 def execution_sanity_check(reward_fn: ExecutionLiteReward, use_wandb: bool) -> bool:
-    """Run reward on a known-good completion; log to WandB if enabled. Returns True if reward > 0 (execution path works)."""
+    """Run reward on known-good completions in multiple formats the model might produce.
+    Returns True if at least the bare-body and full-function formats both score > 0."""
     prompt = "def fibonacci(n):"
-    completion = "    if n <= 1:\n        return n\n    return fibonacci(n - 1) + fibonacci(n - 2)"
-    r = reward_fn(completion, prompt)
-    ok = r > 0.0
+
+    # Format A: bare function body (original test)
+    body_only = "    if n <= 1:\n        return n\n    return fibonacci(n - 1) + fibonacci(n - 2)"
+    # Format B: full function definition (most likely model output via chat template)
+    full_func = "def fibonacci(n):\n    if n <= 1:\n        return n\n    return fibonacci(n - 1) + fibonacci(n - 2)"
+    # Format C: markdown-wrapped (some models do this)
+    markdown = "```python\ndef fibonacci(n):\n    if n <= 1:\n        return n\n    return fibonacci(n - 1) + fibonacci(n - 2)\n```"
+
+    results = {}
+    for label, comp in [("body_only", body_only), ("full_func", full_func), ("markdown", markdown)]:
+        r = reward_fn(comp, prompt)
+        results[label] = r
+        print(f"[sanity check] format={label} reward={r}")
+
     if use_wandb:
         try:
             import wandb
-            wandb.log({"execution_lite_sanity_check": 1.0 if ok else 0.0, "execution_lite_sanity_reward": r}, step=0)
+            wandb.log({f"sanity/{k}": v for k, v in results.items()}, step=0)
         except Exception:
             pass
+
+    ok = results["body_only"] > 0.0 and results["full_func"] > 0.0
     status = "OK" if ok else "FAIL"
-    print(f"[sanity check] ExecutionLiteReward on known fibonacci completion -> reward={r} ({status})")
+    print(f"[sanity check] overall={status} (body_only={results['body_only']:.3f}, full_func={results['full_func']:.3f}, markdown={results['markdown']:.3f})")
     return ok
 
 

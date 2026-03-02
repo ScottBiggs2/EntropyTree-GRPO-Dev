@@ -36,6 +36,7 @@ class BaselineGRPOTrainer:
         self.tree_builder = EntropyGuidedTreeBuilder(
             model, tokenizer, config, self.entropy_computer
         )
+        self._diag_count = 0
 
     def train_step(self, prompt: str) -> Dict[str, float]:
         """Generate K completions, compute rewards and trajectory log probs, GRPO loss, step."""
@@ -48,6 +49,13 @@ class BaselineGRPOTrainer:
         rewards = [self.reward_fn(c, prompt) for c, _ in trajectories]
         mean_reward = sum(rewards) / len(rewards) if rewards else 0.0
         advantages = [r - mean_reward for r in rewards]
+
+        if self._diag_count < 3:
+            self._diag_count += 1
+            best_idx = rewards.index(max(rewards)) if rewards else 0
+            sample = trajectories[best_idx][0] if trajectories else ""
+            preview = sample[:200].replace("\n", "\\n")
+            print(f"[diag baseline] prompt={prompt[:40]!r} rewards={[round(r,3) for r in rewards]} best_completion={preview!r}")
 
         self.model.train()
         log_probs = []
@@ -115,14 +123,13 @@ class EntropyMCTSTrainer:
         )
         self.mask_id = tokenizer.mask_token_id
         self.vocab_size = getattr(tokenizer, "vocab_size", None) or len(tokenizer)
+        self._diag_count = 0
 
     def train_step(self, prompt: str) -> Dict[str, float]:
         """One step: build tree, rewards, advantages, loss, backward, step."""
         self.model.eval()
         root, leaves = self.tree_builder.build_tree(prompt)
         if not leaves:
-            # No usable leaves means no meaningful gradient signal for this prompt.
-            # This should be rare; if it happens frequently something is wrong in tree building.
             return {"loss": 0.0, "avg_reward": 0.0, "tree_nodes": 0, "tree_leaves": 0}
 
         completions = [
@@ -133,6 +140,13 @@ class EntropyMCTSTrainer:
             for leaf in leaves
         ]
         rewards = [self.reward_fn(c, prompt) for c in completions]
+
+        if self._diag_count < 3:
+            self._diag_count += 1
+            best_idx = rewards.index(max(rewards)) if rewards else 0
+            sample = completions[best_idx] if completions else ""
+            preview = sample[:200].replace("\n", "\\n")
+            print(f"[diag mcts] prompt={prompt[:40]!r} rewards={[round(r,3) for r in rewards]} best_completion={preview!r}")
         self.advantage_computer.compute_advantages(
             root, leaves, rewards, mode="branchgrpo",
             advantage_clip=getattr(self.config, "advantage_clip", 2.0),
