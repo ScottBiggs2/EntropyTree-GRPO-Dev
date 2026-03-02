@@ -34,6 +34,8 @@ class MCTSConfig:
     batch_size: int = 1
     learning_rate: float = 1e-5
     max_grad_norm: float = 1.0
+    warmup_ratio: float = 0.1
+    min_lr_ratio: float = 0.05
 
     # Model path and device (D-001: MPS/CPU, no CUDA)
     model_name_or_path: str = "dllm-collection/Qwen2.5-Coder-0.5B-Instruct-diffusion-mdlm-v0.1"

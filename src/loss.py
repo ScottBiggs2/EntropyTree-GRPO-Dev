@@ -49,16 +49,21 @@ class WeightedGRPOLoss:
         sum_weighted_term = 0.0  # - w * A * log_prob per transition
 
         for trans in transitions:
-            log_prob = self._log_prob_transition(
+            raw_log_prob = self._log_prob_transition(
                 model, trans.parent_state, trans.child_state, trans.parent_attention_mask
             )
+            # Per-token normalization: prevents loss scale from depending on
+            # how many tokens each transition unmasks.
+            changed = (trans.parent_state != trans.child_state) & (trans.parent_state == self.mask_id)
+            n_tok = max(int(changed.sum().item()), 1)
+            log_prob = raw_log_prob / n_tok
+
             w_time = trans.time_weight
             w_ent = trans.entropy_weight
             w = self.config.alpha_time * w_time + self.config.alpha_entropy * w_ent
             contrib = -w * trans.advantage * log_prob
             total_loss = total_loss + contrib
 
-            # Floating-point summaries (on CPU) for logging.
             lp_val = float(log_prob.item())
             adv_val = float(trans.advantage)
             sum_abs_adv += abs(adv_val)
@@ -147,3 +152,22 @@ class WeightedGRPOLoss:
             self._log_prob_transition(model, p, c, a) for p, c, a in transitions
         )
         return total
+
+    def trajectory_log_prob_with_count(
+        self,
+        model: torch.nn.Module,
+        transitions: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+    ) -> Tuple[torch.Tensor, int]:
+        """Like trajectory_log_prob but also returns total number of unmasked tokens
+        so callers can normalize per-token."""
+        if not transitions:
+            dev = next(model.parameters()).device
+            return torch.tensor(0.0, device=dev), 0
+        total_lp = torch.tensor(0.0, device=next(model.parameters()).device)
+        total_tokens = 0
+        for p, c, a in transitions:
+            changed = (p != c) & (p == self.mask_id)
+            n_changed = int(changed.sum().item())
+            total_tokens += n_changed
+            total_lp = total_lp + self._log_prob_transition(model, p, c, a)
+        return total_lp, total_tokens

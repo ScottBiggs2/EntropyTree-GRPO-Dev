@@ -146,3 +146,25 @@ def get_num_transfer_tokens(
     return num_transfer
 
 
+# ----- LR scheduler: linear warmup + cosine decay -----
+
+import math
+
+
+def build_lr_scheduler(
+    optimizer: torch.optim.Optimizer,
+    total_steps: int,
+    warmup_ratio: float = 0.1,
+    min_lr_ratio: float = 0.05,
+) -> torch.optim.lr_scheduler.LambdaLR:
+    """Linear warmup for warmup_ratio * total_steps, then cosine decay to min_lr_ratio * peak_lr."""
+    warmup_steps = max(1, int(total_steps * warmup_ratio))
+
+    def lr_lambda(current_step: int) -> float:
+        if current_step < warmup_steps:
+            return max(min_lr_ratio, current_step / warmup_steps)
+        progress = (current_step - warmup_steps) / max(1, total_steps - warmup_steps)
+        cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+        return min_lr_ratio + (1.0 - min_lr_ratio) * cosine
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)

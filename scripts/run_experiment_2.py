@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT))
 import torch
 
 from src.config import MCTSConfig
-from src.utils import load_model_and_tokenizer
+from src.utils import load_model_and_tokenizer, build_lr_scheduler
 from src.entropy import EntropyComputer
 from src.time_weight import TimeWeighter
 from src.rewards import ExecutionLiteReward
@@ -137,6 +137,12 @@ def run_baseline(
 
     model, tokenizer = load_model_and_tokenizer(config)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
+    total_steps = config.num_epochs * len(prompts)
+    scheduler = build_lr_scheduler(
+        optimizer, total_steps,
+        warmup_ratio=config.warmup_ratio, min_lr_ratio=config.min_lr_ratio,
+    )
+    print(f"[baseline] LR schedule: warmup {int(total_steps * config.warmup_ratio)} / {total_steps} steps, peak={config.learning_rate}, min={config.learning_rate * config.min_lr_ratio}")
     ec = EntropyComputer()
     tw = TimeWeighter(config.total_denoising_steps)
     loss_fn = WeightedGRPOLoss(config, ec, tw, tokenizer.mask_token_id)
@@ -147,6 +153,7 @@ def run_baseline(
         reward_fn=reward_fn,
         loss_computer=loss_fn,
         optimizer=optimizer,
+        scheduler=scheduler,
     )
 
     if use_wandb:
@@ -207,6 +214,12 @@ def run_entropy_mcts(
 
     model, tokenizer = load_model_and_tokenizer(config)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
+    total_steps = config.num_epochs * len(prompts)
+    scheduler = build_lr_scheduler(
+        optimizer, total_steps,
+        warmup_ratio=config.warmup_ratio, min_lr_ratio=config.min_lr_ratio,
+    )
+    print(f"[entropy_mcts] LR schedule: warmup {int(total_steps * config.warmup_ratio)} / {total_steps} steps, peak={config.learning_rate}, min={config.learning_rate * config.min_lr_ratio}")
     ec = EntropyComputer()
     tw = TimeWeighter(config.total_denoising_steps)
     loss_fn = WeightedGRPOLoss(config, ec, tw, tokenizer.mask_token_id)
@@ -218,6 +231,7 @@ def run_entropy_mcts(
         advantage_computer=AdvantageComputer(),
         loss_computer=loss_fn,
         optimizer=optimizer,
+        scheduler=scheduler,
     )
 
     if use_wandb:
@@ -233,6 +247,7 @@ def run_entropy_mcts(
             "tree_nodes": [],
             "tree_leaves": [],
             "avg_entropy": [],
+            "lr": [],
             "n_transitions": [],
             "mean_abs_adv": [],
             "mean_w_time": [],
