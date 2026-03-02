@@ -65,8 +65,16 @@ class AdvantageComputer:
             fused = [n.fused_reward for n in nodes if n.fused_reward is not None]
             if not fused:
                 continue
+            # If there are fewer than 2 nodes at this depth, depth-wise normalization
+            # becomes numerically unstable (std -> 0). In that case, set advantages
+            # to 0.0 for this depth so they neither explode nor dominate learning.
+            if len(fused) < 2:
+                for n in nodes:
+                    if n.fused_reward is not None:
+                        n.advantage = 0.0
+                continue
             mean_d = float(np.mean(fused))
-            std_d = float(np.std(fused)) + 1e-8
+            std_d = float(np.std(fused)) + 1e-6  # epsilon large enough to avoid huge scaling
             for n in nodes:
                 if n.fused_reward is not None:
                     a = (n.fused_reward - mean_d) / std_d

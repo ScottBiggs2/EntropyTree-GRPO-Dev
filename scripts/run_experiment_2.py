@@ -301,6 +301,7 @@ def main():
     p.add_argument("--wandb_project", type=str, default="entropy-tree-grpo")
     p.add_argument("--save_every_steps", type=int, default=None)
     p.add_argument("--no_wandb", action="store_true", help="Disable WandB even if available")
+    p.add_argument("--learning_rate", type=float, default=1e-6, help="Learning rate for GRPO optimizer (very sensitive!)")
     p.add_argument("--max_tree_nodes", type=int, default=10)
     p.add_argument("--branch_width", type=int, default=2)
     p.add_argument("--steps_per_expansion", type=int, default=16)
@@ -328,6 +329,7 @@ def main():
         max_new_tokens=args.max_new_tokens,
         num_baseline_samples=args.num_baseline_samples,
         device=args.device,
+        learning_rate=args.learning_rate,
     )
     prompts = load_prompts(args.prompts_file, args.registry)
     eval_prompts = get_eval_prompts_from_registry(args.registry)
