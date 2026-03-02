@@ -152,8 +152,11 @@ class EntropyGuidedTreeBuilder:
         if expected_h < 1e-6:
             return base_temp
         uncertainty_ratio = float(node.entropy) / float(expected_h)
-        temperature = base_temp * (0.7 + 0.6 * uncertainty_ratio)
-        return max(0.5, min(1.3, temperature))
+        # Tighter, safer range: base_temp * [0.8, 1.1] for uncertainty_ratio in [0, 1].
+        # Clamp the ratio so we don't overshoot when entropy is noisy.
+        ratio_clamped = min(uncertainty_ratio, 1.0)
+        temperature = base_temp * (0.8 + 0.3 * ratio_clamped)
+        return temperature
 
     def _denoise_chunk(self, node: MCTSNode, num_steps: int, temperature: float) -> MCTSNode:
         """Run num_steps denoising steps from node; return new child node."""
