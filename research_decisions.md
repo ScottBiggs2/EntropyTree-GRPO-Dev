@@ -2,7 +2,7 @@
 
 **Project**: Entropy-Guided MCTS-GRPO for Diffusion Language Models  
 **Model**: `dllm-collection/Qwen2.5-Coder-0.5B-Instruct-diffusion-mdlm-v0.1`  
-**Last Updated**: 2026-02-18
+**Last Updated**: 2026-03-15
 
 ---
 
@@ -198,6 +198,11 @@ sampled = torch.multinomial(probs, num_samples=1)
 - `alpha_entropy`: 0.0 (no entropy) / 0.25 / 0.5 / 1.0
 - `alpha_time`: 0.0 (no time) / 0.5 / 1.0
 
+**Important Note (Concept Check, 2026-03-15)**:
+- The current implementation normalizes `w_time` so the full schedule sums to 1, which makes each individual per-step time weight `O(1 / T)`.
+- The current entropy weight is clamped around `O(1)`.
+- Therefore the additive combination `alpha_time * w_time + alpha_entropy * w_ent` is not scale-balanced: with defaults, entropy weighting dominates unless time weights are rescaled or interpreted as interval mass over multiple steps.
+
 **Your Notes**:
 > _(paste responses here)_
 
@@ -269,6 +274,72 @@ sampled = torch.multinomial(probs, num_samples=1)
 
 **Your Notes**:
 > _(paste responses here)_
+
+---
+
+## D-015: Adaptive Branch Timing
+
+| Field | Value |
+|-------|-------|
+| **Status** | `OPEN` |
+| **Default** | Keep fixed `steps_per_expansion` as the baseline implementation, but treat it as a bootstrap baseline rather than the target long-term design |
+| **Alternatives** | Entropy-threshold branching, token-fraction branching, KL-budget branching |
+
+**Rationale**: Fixed branch intervals are simple and reproducible, but they do not align branch points with the model's actual decision structure. [TreeRL](https://arxiv.org/abs/2506.11902) argues that branching from high-uncertainty intermediate states improves search efficiency under the same generation token budget. For our method, fixed-step branching is acceptable for a baseline but not the strongest conceptual endpoint.
+
+**Current Read**:
+- **Good enough now**: fixed-step branching is a reasonable scaffold while validating the tree, reward, and loss pipeline.
+- **Likely better target**: uncertainty-triggered branching after a minimum number of denoising steps, with a maximum-step fallback.
+- **Recommended comparison set**: fixed-step vs token-fraction vs entropy-threshold.
+
+**Your Notes**:
+> Concept check (2026-03-15): treat fixed-step branching as a baseline, not a settled research choice. Once baseline parity is established, prioritize uncertainty-triggered branching over schedule-based branching.
+
+---
+
+## D-016: Time Weighting for Variable-Length Expansions
+
+| Field | Value |
+|-------|-------|
+| **Status** | `OPEN` |
+| **Default** | For the fixed-step baseline, the current parent-step lookup is an acceptable proxy. If adaptive stepping is introduced, switch to **interval-aware** edge weighting |
+| **Alternatives** | Parent-step lookup only, interval-mass weighting, full micro-step logging |
+
+**Rationale**: The current loss attaches time weight to `node.step_index`, i.e. the parent timestamp of an edge. This is only faithful when every edge spans the same number of denoising steps. If branches happen at inconsistent times, different edges cover different intervals and should not all receive a single-point weight. The natural discrete-time generalization of TempFlow-style schedules is:
+
+$$w_{\text{edge}}(t_0, t_1) = \sum_{t=t_0}^{t_1-1} w(t)$$
+
+**Current Read**:
+- **Minimal fix**: compute time weight from the whole edge interval `[t_parent, t_child)`.
+- **Preferred long-term fix**: log intra-chunk micro-transitions and apply time weights step-by-step.
+- **Blocking issue for adaptive stepping**: do not evaluate dynamic branch timing without updating the time-weight logic accordingly.
+
+**Your Notes**:
+> Concept check (2026-03-15): point lookup is only a fixed-step proxy. Dynamic branching should ship together with interval-aware time weighting.
+
+---
+
+## D-017: Entropy Normalization Convention
+
+| Field | Value |
+|-------|-------|
+| **Status** | `OPEN` |
+| **Default** | Keep **mean entropy over masked positions** for node ranking, but normalize it against a baseline defined on the same statistic |
+| **Alternatives** | Sequence-averaged entropy, masked-position mean entropy with analytic bound, masked-position mean entropy with empirical stage baseline |
+
+**Rationale**: The current implementation stores node entropy as the mean over masked positions only, but compares it against `masking_ratio * log(V)`. That denominator corresponds to a sequence-averaged upper bound, not the masked-position mean. Mixing the two artificially inflates the entropy ratio at later denoising stages and muddies the interpretation of both entropy weighting and adaptive branch thresholds.
+
+**Recommended options**:
+1. **Analytic fallback**: `w_ent = H_masked_mean / log(V)`
+2. **Preferred stage-aware version**: `w_ent = H_masked_mean / E[H_masked_mean | masking_ratio]`
+
+**Current Read**:
+- Node ranking by raw masked-position mean entropy is fine.
+- Loss weighting and dynamic branch thresholds should use a normalization baseline defined on the exact same aggregate.
+- If we keep additive time+entropy weights, both terms should eventually be rescaled to comparable magnitudes so `alpha_*` remains interpretable.
+
+**Your Notes**:
+> Concept check (2026-03-15): the entropy signal itself is good, but the current normalization convention is not yet conceptually clean.
 
 ---
 

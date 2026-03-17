@@ -41,8 +41,8 @@ echo "CUDA: $(python -c 'import torch; print(torch.cuda.is_available())')"
 
 RUN_NAME="grpo_${SLURM_JOB_ID:-local}_8.5"
 CHECKPOINT_DIR="$(pwd)/checkpoints"
-MAX_TREE_NODES=24
-BRANCH_WIDTH=2
+MAX_TREE_NODES=48
+BRANCH_WIDTH=3
 STEPS_PER_EXPANSION=16
 MAX_NEW_TOKENS=256
 NUM_BASELINE_SAMPLES=4

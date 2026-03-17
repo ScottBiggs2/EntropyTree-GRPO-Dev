@@ -159,6 +159,20 @@ Quick reference for papers and repositories relevant to entropy-guided MCTS-GRPO
 
 ---
 
+### TreeRL: On-Policy Tree Search for LLM RL
+**Paper**: [TreeRL: LLM Reinforcement Learning with On-Policy Tree Search](https://arxiv.org/abs/2506.11902) (ACL 2025)  
+**Authors**: Hou et al.
+
+**Key Contributions**:
+- Directly incorporates on-policy tree search into LLM RL training rather than relying on independent chain sampling
+- Uses dense, on-policy intermediate supervision, avoiding a separate process reward model and reducing reward-model mismatch / reward hacking risk
+- Shows better search efficiency under a fixed generation token budget by branching from **high-uncertainty intermediate states** rather than random branch points
+- Improves performance on challenging math and code reasoning benchmarks relative to chain-based RL baselines
+
+**Relevance**: Strong conceptual support for our move away from fixed branch intervals toward **dynamic branching at uncertainty peaks**. It also reinforces a more process-level view of supervision, which matters if we later move from macro-step edges to finer-grained transition logging.
+
+---
+
 ### Fast-MCTD: Efficient MCTS for Diffusion Planning
 **Paper**: [Fast Monte Carlo Tree Diffusion: 100× Speedup via Parallel Sparse Planning](https://arxiv.org/abs/2506.09498)  
 **Authors**: Yoon et al.
@@ -253,6 +267,9 @@ A: TreeGRPO (Ding & Ye) → Tree-based advantage backpropagation
 **Q: Which paper for exploration strategy?**  
 A: DeepSearch → Global frontier selection with entropy
 
+**Q: Which paper for dynamic branch timing?**  
+A: TreeRL → Branch from high-uncertainty intermediate states under a fixed token budget
+
 **Q: Which paper for coarse-grained branching?**  
 A: Fast-MCTD (Yoon et al.) → Macro-step expansion (32-64 steps)
 
@@ -269,15 +286,16 @@ A: dLLM (ZHZisZZ) → Clean, minimal, actively maintained, has our target models
 For quick implementation:
 1. **MDLM** (Sahoo) - understand entropy computation
 2. **DeepSearch** - understand global frontier selection
-3. **TreeGRPO** (Ding & Ye) - understand tree-based advantages
-4. **TempFlow-GRPO** (He) - understand time weighting
+3. **TreeRL** (Hou et al.) - understand high-uncertainty branch timing and process supervision
+4. **TreeGRPO** (Ding & Ye) - understand tree-based advantages
+5. **TempFlow-GRPO** (He) - understand time weighting
 
 For deeper understanding:
-5. **DiffuCoder** (Apple) - see discrete diffusion RL in practice
-6. **Fast-MCTD** (Yoon) - understand coarse-grained expansion
-7. **BD3LM** (Arriola) - understand variance reduction techniques
+6. **DiffuCoder** (Apple) - see discrete diffusion RL in practice
+7. **Fast-MCTD** (Yoon) - understand coarse-grained expansion
+8. **BD3LM** (Arriola) - understand variance reduction techniques
 
 For scaling up later:
-8. **Dream** (Ye) - see how diffusion LLMs scale to 7B
-9. **Flow-GRPO** (Liu) - understand continuous diffusion RL
+9. **Dream** (Ye) - see how diffusion LLMs scale to 7B
+10. **Flow-GRPO** (Liu) - understand continuous diffusion RL
 

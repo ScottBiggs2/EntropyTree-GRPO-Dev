@@ -26,7 +26,7 @@ class MCTSConfig:
     advantage_clip: float = 2.0
 
     # Model / generation
-    total_denoising_steps: int = 256
+    total_denoising_steps: int = 128 # consistent with dLLM docs
     max_new_tokens: int = 256
     block_size: int = 64
 
