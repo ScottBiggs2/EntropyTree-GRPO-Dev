@@ -113,6 +113,10 @@ On a cloud machine with sufficient GPU memory (e.g. A100 40GB+):
    pip install -r dream/requirements.txt
    ```
 
+1b. **HuggingFace cache hardening (important for quotas)**:
+
+   The provided scripts (`validate_dream.py`, `validate_dream_tree.py`, `single_step_dream.py`) automatically set `HF_HOME` to `/scratch/<user>/hf_home` when `HF_HOME` is not already defined, to avoid home-dir disk quota / lockfile failures.
+
 2. **Validate Dream 7B** (Phase 0 — load, forward pass, entropy checks):
 
    From repo root:

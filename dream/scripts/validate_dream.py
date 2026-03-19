@@ -24,6 +24,37 @@ _repo_root = Path(__file__).resolve().parents[2]
 if str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 
+import os
+
+
+def _configure_hf_cache() -> None:
+    """Harden HuggingFace cache locations to avoid home-dir quotas.
+
+    If HF_HOME is already set, leave it alone.
+    Prefer /scratch/<user>/hf_home when available.
+    """
+    if os.environ.get("HF_HOME"):
+        return
+
+    user = os.environ.get("USER") or os.environ.get("USERNAME") or "user"
+    # Most clusters mount per-user scratch under /scratch/<user>/...
+    scratch_root = os.environ.get("SCRATCH") or "/scratch"
+    hf_home = os.path.join(scratch_root, user, "hf_home")
+
+    try:
+        os.makedirs(hf_home, exist_ok=True)
+        os.environ["HF_HOME"] = hf_home
+        os.environ.setdefault("TRANSFORMERS_CACHE", os.path.join(hf_home, "transformers"))
+        os.environ.setdefault("HUGGINGFACE_HUB_CACHE", os.path.join(hf_home, "hub"))
+        os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+        print(f"Using HF_HOME={hf_home}")
+    except Exception:
+        # Fall back to whatever default HF caching strategy is set by env.
+        pass
+
+
+_configure_hf_cache()
+
 import torch
 
 
