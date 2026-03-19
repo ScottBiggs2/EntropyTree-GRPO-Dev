@@ -1,8 +1,10 @@
 ## Dream Subdirectory Overview
 
 This `dream/` folder contains a **self-contained substack** for running
-entropy-guided MCTS-GRPO on Dream 7B (and MDLM) without disturbing the
+entropy-guided MCTS-GRPO on **Dream 7B** (and MDLM) without disturbing the
 original toy MDLM implementation in `src/`.
+
+**Starting point**: [Dream-org/Dream-v0-Instruct-7B](https://huggingface.co/Dream-org/Dream-v0-Instruct-7B) — the instruct-tuned 7B diffusion LLM (no RL). We apply our entropy-MCTS-GRPO on top for code; see the [model card](https://huggingface.co/Dream-org/Dream-v0-Instruct-7B) and [Dream blog](https://hkunlp.github.io/blog/2025/dream/) for details.
 
 Use this directory when:
 
@@ -52,8 +54,10 @@ dream/
 │   ├── loss.py           # Corrected weighted GRPO loss
 │   ├── rewards.py        # Syntax / execution-lite / judge placeholder
 │   ├── trainer.py        # Minimal EntropyMCTSTrainer (one-step loop)
-│   ├── utils.py          # Device, model loading, LR scheduler
-│   └── ... (future: execution, scripts)
+│   └── utils.py          # Device, model loading, LR scheduler
+├── scripts/
+│   ├── validate_dream.py   # Phase 0: load Dream 7B, forward + entropy checks
+│   └── single_step_dream.py # One training step with Dream 7B (small tree)
 └── tests/
     ├── __init__.py
     ├── test_entropy_corrected.py
@@ -96,23 +100,43 @@ module.
 
 ---
 
-### Cloud GPU Usage (Dream 7B)
+### Cloud GPU: Dream 7B full setup
 
-On a cloud machine with sufficient GPU memory:
+On a cloud machine with sufficient GPU memory (e.g. A100 40GB+):
 
-1. **Create a fresh, isolated environment** for Dream to satisfy pinned deps
-   (keep it separate from the lightweight MDLM R&D environment):
+1. **Environment** (isolate from main R&D):
 
    ```bash
-   conda create -n dream-entropy python=3.11 -y
+   conda create -n dream-entropy python=3.10 -y   # 3.10 for compatibility
    conda activate dream-entropy
+   cd /path/to/EntropyTree-GRPO-Dream   # or your repo root
    pip install -r dream/requirements.txt
    ```
 
-2. **Load the real Dream model** using `dream.src.utils.load_model_and_tokenizer`
-   with `MCTSConfig(model_type="dream", model_name_or_path="Dream-org/Dream-v0-Instruct-7B")`.
+2. **Validate Dream 7B** (Phase 0 — load, forward pass, entropy checks):
 
-3. **Choose a reward setup for GRPO on code**:
+   From repo root:
+
+   ```bash
+   python dream/scripts/validate_dream.py
+   ```
+
+   You should see: model load, a short generated snippet, logits shape `[1, L, V]`, and entropy in `[0, log(V)]`. Fix any import or device errors before continuing.
+
+3. **Single training step** (one entropy-MCTS-GRPO step with Dream 7B):
+
+   From repo root:
+
+   ```bash
+   python dream/scripts/single_step_dream.py --prompt "Write a Python function to check if a number is prime."
+   ```
+
+   Optional: `--max-tree-nodes 5 --max-new-tokens 128 --steps-per-expansion 16` to reduce VRAM. Uses `SyntaxReward` by default; for execution-based reward see Step 4 below.
+
+4. **Use Dream in your own training loop**: load with `dream.src.utils.load_model_and_tokenizer`
+   and `MCTSConfig(model_type="dream", model_name_or_path="Dream-org/Dream-v0-Instruct-7B")`.
+
+5. **Choose a reward setup for GRPO on code**:
 
    ```python
    from dream.src.rewards import SyntaxReward, ExecutionLiteReward
@@ -129,7 +153,7 @@ On a cloud machine with sufficient GPU memory:
    (see `DEVELOPMENT_PLAN.md`, Step 11). The trainer only requires
    a callable `reward_fn(completion, prompt) -> float`.
 
-4. **Construct the trainer and run a single Dream training step**:
+6. **Construct the trainer and run training**:
 
    ```python
    import torch
@@ -148,9 +172,8 @@ On a cloud machine with sufficient GPU memory:
    print(metrics)
    ```
 
-5. For full experimental details (validation scripts, baselines,
-   evaluation, and baseline GRPO), follow the step-by-step instructions
-   in `DEVELOPMENT_PLAN.md`.
+7. For full experimental details (baselines, evaluation, baseline GRPO), follow
+   the step-by-step instructions in `DEVELOPMENT_PLAN.md`.
 
 ---
 
