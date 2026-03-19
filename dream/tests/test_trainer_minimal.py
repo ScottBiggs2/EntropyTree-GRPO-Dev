@@ -50,8 +50,6 @@ def _dummy_reward(completion: str, prompt: str) -> float:
 
 def test_entropy_mcts_trainer_single_step_runs():
     """Smoke test: one train_step runs end to end with mock model."""
-    model = _TinyMockModel(vocab_size=32)
-    tok = _TinyMockTokenizer(vocab_size=32)
     cfg = MCTSConfig(
         model_type="mdlm",
         max_tree_nodes=5,
@@ -60,6 +58,9 @@ def test_entropy_mcts_trainer_single_step_runs():
         max_new_tokens=16,
         total_denoising_steps=32,
     )
+    # Put model on config device so tree builder tensors match (works on CPU, MPS, or CUDA).
+    model = _TinyMockModel(vocab_size=32).to(cfg.device)
+    tok = _TinyMockTokenizer(vocab_size=32)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     trainer = EntropyMCTSTrainer(
         model=model,

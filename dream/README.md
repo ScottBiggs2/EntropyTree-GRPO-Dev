@@ -14,6 +14,26 @@ The original MDLM stack in `src/` remains the reference baseline.
 
 ---
 
+```bash 
+conda create -n EntropyTreeGRPO_Dream_env python=3.10 -y   # Must be 3.10 for dLLM compatability
+conda activate EntropyTreeGRPO_Dream_env
+cd /path/to/EntropyTree-GRPO-Dream
+python -m pip install -r requirements.txt
+```
+
+Scratch: 
+```bash
+conda create -n EntropyTreeGRPO_Dream_env python=3.10 -y   # Must be 3.10 for dLLM compatability
+
+conda create --prefix /scratch/biggs.s/conda_envs/EntropyTreeGRPO_Dream_env --clone /home/biggs.s/miniconda/envs/EntropyTreeGRPO_Dream_env
+
+conda activate /scratch/biggs.s/conda_envs/EntropyTreeGRPO_Dream_env
+
+# Get a quick interactive GPU session:
+srun --partition=gpu --nodes=1 --pty --gres=gpu:1 --ntasks=1 --mem=32GB --time=1:00:00 /bin/bash
+
+```
+---
 ### Layout
 
 ```text
@@ -49,9 +69,17 @@ dream/
 On the local laptop you should **not** load large models. All current
 tests use tiny mock models and run quickly.
 
-From the repo root:
+Run tests from the **repo root** (the directory that contains `dream/`), so that `dream.src` imports resolve:
 
 ```bash
+# From repo root (e.g. EntropyTree-GRPO or EntropyTree-GRPO-Dream):
+python -m pytest dream/tests -q
+```
+
+If your shell is **inside** `dream/` (e.g. `pwd` shows `.../dream`), go up one level then run the same command:
+
+```bash
+cd ..
 python -m pytest dream/tests -q
 ```
 
