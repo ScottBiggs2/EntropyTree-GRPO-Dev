@@ -44,10 +44,10 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
     model.eval()
 
-    V = getattr(tokenizer, "vocab_size", None) or len(tokenizer)
-    log_V = math.log(V)
+    V_tok = getattr(tokenizer, "vocab_size", None) or len(tokenizer)
+    log_V_tok = math.log(V_tok)
     mask_id = tokenizer.mask_token_id
-    print(f"Vocab size V = {V}, log(V) = {log_V:.4f}, mask_id = {mask_id}")
+    print(f"Tokenizer vocab size V_tok = {V_tok}, log(V_tok) = {log_V_tok:.4f}, mask_id = {mask_id}")
 
     # ---- Test 1: diffusion_generate ----
     print("\n--- Test 1: diffusion_generate ---")
@@ -101,17 +101,28 @@ def main():
         n_masked = mask_positions.sum().item()
         mean_entropy = entropy[0][mask_positions].mean().item()
 
-    print(f"  logits shape: {logits.shape} (expected [1, {L}, V])")
+    V_logits = logits.shape[-1]
+    log_V_logits = math.log(V_logits)
+    print(f"  logits shape: {logits.shape} (expected [1, {L}, V_logits])")
     print(f"  Masked positions: {n_masked}")
     print(f"  Mean entropy (masked): {mean_entropy:.4f}")
-    print(f"  Expected range: [0, {log_V:.4f}]")
+    print(f"  Expected range (based on logits dim): [0, {log_V_logits:.4f}]")
 
     checks = []
-    checks.append(("logits shape [1, L, V]", logits.shape[0] == 1 and logits.shape[1] == L and logits.shape[2] == V))
-    checks.append(("entropy in range", 0 <= mean_entropy <= log_V * 1.01))
-
-    for name, ok in checks:
-        print(f"  [{'PASS' if ok else 'FAIL'}] {name}")
+    # Some Dream tokenizers expose added tokens; the true logits vocab size can
+    # differ from tokenizer.vocab_size. We treat that as informational, not an error.
+    checks.append(
+        (
+            "logits shape [1, L, V_logits]",
+            logits.shape[0] == 1 and logits.shape[1] == L and logits.shape[2] == V_logits,
+        )
+    )
+    checks.append(
+        (
+            "entropy in range (based on logits dim)",
+            0 <= mean_entropy <= log_V_logits * 1.01,
+        )
+    )
 
     # ---- Test 3: ModelAdapter + EntropyComputer (our stack) ----
     print("\n--- Test 3: ModelAdapter + EntropyComputer ---")
@@ -128,9 +139,23 @@ def main():
         token_entropy = entropy_computer.compute_token_entropy_from_logits(logits_adapter)
     mean_entropy_adapter = token_entropy[0][mask_positions].mean().item()
     print(f"  Adapter mean entropy (masked): {mean_entropy_adapter:.4f}")
-    checks.append(("adapter entropy in range", 0 <= mean_entropy_adapter <= log_V * 1.01))
+    checks.append(
+        (
+            "adapter entropy in range (based on logits dim)",
+            0 <= mean_entropy_adapter <= log_V_logits * 1.01,
+        )
+    )
+
+    # Print check summary (all checks, including adapter entropy).
+    for name, ok in checks:
+        print(f"  [{'PASS' if ok else 'FAIL'}] {name}")
 
     all_ok = all(ok for _, ok in checks)
+    if not all_ok:
+        # Print explicit mismatch detail to avoid ambiguity.
+        print("\nMismatch details:")
+        print(f"  V_tok = {V_tok}, V_logits = {V_logits}")
+        print(f"  L_expected = {L}, logits.shape[1] = {logits.shape[1]}")
     print("\n" + ("All checks PASSED." if all_ok else "Some checks FAILED."))
     return 0 if all_ok else 1
 

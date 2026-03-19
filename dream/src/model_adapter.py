@@ -21,7 +21,13 @@ class ModelAdapter:
         self.tokenizer = tokenizer
         self.model_type = model_type
         self.mask_id = tokenizer.mask_token_id
-        self.vocab_size = getattr(tokenizer, "vocab_size", None) or len(tokenizer)
+        # Use the actual logits vocabulary size when available.
+        # Some Dream tokenizers can have extra/added tokens vs model logits dim.
+        self.vocab_size = (
+            getattr(getattr(model, "config", None), "vocab_size", None)
+            or getattr(tokenizer, "vocab_size", None)
+            or len(tokenizer)
+        )
         self.device = next(model.parameters()).device
 
     # ---- Forward / logits ----

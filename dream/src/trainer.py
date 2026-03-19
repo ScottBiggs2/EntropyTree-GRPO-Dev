@@ -63,7 +63,8 @@ class EntropyMCTSTrainer:
             tokenizer.mask_token_id,
             self.adapter,
         )
-        self.vocab_size = getattr(tokenizer, "vocab_size", None) or len(tokenizer)
+        # Use adapter's vocab_size for correct entropy normalization.
+        self.vocab_size = self.adapter.vocab_size
         self._diag_count = 0
 
     def train_step(self, prompt: str) -> Dict[str, float]:
