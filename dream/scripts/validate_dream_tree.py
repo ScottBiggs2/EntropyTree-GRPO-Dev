@@ -8,6 +8,8 @@ Confirms:
 - ModelAdapter forward_logits + right-shift works end-to-end inside tree
 - Entropy is computed for root and intermediate nodes
 - Tree can expand with a small budget without crashing
+- Optional: adaptive stepping (variable steps_in_edge) vs fixed steps_per_expansion
+- Optional: LoRA-wrapped model (same tree code path as training)
 
 Run from repo root:
   python dream/scripts/validate_dream_tree.py
@@ -17,6 +19,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
+from typing import List
 
 _repo_root = Path(__file__).resolve().parents[2]
 if str(_repo_root) not in sys.path:
@@ -43,7 +46,6 @@ def _configure_hf_cache() -> None:
 
 _configure_hf_cache()
 
-import math
 import torch
 
 
@@ -51,15 +53,55 @@ def count_nodes(node) -> int:
     return 1 + sum(count_nodes(c) for c in node.children)
 
 
+def collect_steps_in_edges(node) -> List[int]:
+    """Gather steps_in_edge from every child link (adaptive stepping diagnostic)."""
+    out: List[int] = []
+    for c in node.children:
+        if getattr(c, "steps_in_edge", None) is not None:
+            out.append(int(c.steps_in_edge))
+        out.extend(collect_steps_in_edges(c))
+    return out
+
+
 def main():
     p = argparse.ArgumentParser(description="Validate Dream tree building (small tree).")
     p.add_argument("--model", type=str, default="Dream-org/Dream-v0-Instruct-7B")
-    p.add_argument("--prompt", type=str, default="Write a Python function to check if a number is prime.")
+    p.add_argument(
+        "--prompt",
+        type=str,
+        default="Write a Python function to check if a number is prime.",
+    )
     p.add_argument("--max-tree-nodes", type=int, default=5)
     p.add_argument("--branch-width", type=int, default=2)
     p.add_argument("--steps-per-expansion", type=int, default=16)
     p.add_argument("--max-new-tokens", type=int, default=128)
     p.add_argument("--adaptive-stepping", action="store_true")
+    p.add_argument(
+        "--branch-threshold",
+        type=float,
+        default=0.65,
+        help="Adaptive: early-stop when H_masked_mean/log(V) > this after min_steps (typical 0.5–0.8)",
+    )
+    p.add_argument(
+        "--min-steps-per-expansion",
+        type=int,
+        default=8,
+        help="Adaptive: minimum micro-steps per expansion",
+    )
+    p.add_argument(
+        "--max-steps-per-expansion",
+        type=int,
+        default=48,
+        help="Adaptive: maximum micro-steps per expansion",
+    )
+    p.add_argument(
+        "--lora",
+        action="store_true",
+        help="Load model with PEFT LoRA (same as training smoke test)",
+    )
+    p.add_argument("--lora-r", type=int, default=8)
+    p.add_argument("--lora-alpha", type=int, default=16)
+    p.add_argument("--lora-dropout", type=float, default=0.0)
     args = p.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -67,20 +109,11 @@ def main():
         print("WARNING: CUDA not available; this validation is intended for GPU.")
 
     print("Loading Dream model/tokenizer...")
-    from transformers import AutoModel, AutoTokenizer
-
-    model = AutoModel.from_pretrained(
-        args.model,
-        trust_remote_code=True,
-        torch_dtype=torch.bfloat16,
-    ).to(device)
-    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
-    model.eval()
-
     from dream.src.config import MCTSConfig
     from dream.src.model_adapter import ModelAdapter
     from dream.src.entropy import EntropyComputer
     from dream.src.tree_builder import EntropyGuidedTreeBuilder
+    from dream.src.utils import load_model_and_tokenizer
 
     cfg = MCTSConfig(
         model_type="dream",
@@ -92,18 +125,30 @@ def main():
         max_new_tokens=args.max_new_tokens,
         total_denoising_steps=min(256, args.max_new_tokens),
         adaptive_stepping=bool(args.adaptive_stepping),
+        branch_threshold=args.branch_threshold,
+        min_steps_per_expansion=args.min_steps_per_expansion,
+        max_steps_per_expansion=args.max_steps_per_expansion,
+        use_lora=args.lora,
+        lora_r=args.lora_r,
+        lora_alpha=args.lora_alpha,
+        lora_dropout=args.lora_dropout,
     )
+
+    model, tokenizer = load_model_and_tokenizer(cfg)
+    model.eval()
 
     adapter = ModelAdapter(model, tokenizer, model_type="dream")
     entropy_computer = EntropyComputer()
     builder = EntropyGuidedTreeBuilder(adapter, tokenizer, cfg, entropy_computer)
 
-    print("Building tree...")
+    mode = "adaptive" if cfg.adaptive_stepping else "fixed"
+    print(f"Building tree (stepping={mode}, branch_threshold={cfg.branch_threshold})...")
     root, leaves = builder.build_tree(args.prompt)
 
     n_nodes = count_nodes(root)
     n_leaves = len(leaves)
     entropies = [n.entropy for n in [root] + leaves if n.entropy is not None]
+    edge_steps = collect_steps_in_edges(root)
 
     print(f"Tree summary: nodes={n_nodes}, leaves={n_leaves}")
     if entropies:
@@ -111,9 +156,18 @@ def main():
             f"Entropy summary: mean={sum(entropies)/len(entropies):.4f}, "
             f"min={min(entropies):.4f}, max={max(entropies):.4f}"
         )
+    if edge_steps:
+        uniq = sorted(set(edge_steps))
+        print(
+            f"steps_in_edge (child links): n={len(edge_steps)}, "
+            f"unique={uniq}, sample={edge_steps[:12]}"
+        )
+    elif args.adaptive_stepping:
+        print("NOTE: no steps_in_edge recorded (unexpected for adaptive expansions).")
 
-    # Minimal functional checks (no strict thresholds; real values depend on prompt).
-    ok = root.entropy is not None and n_leaves >= 1 and all(l.entropy is not None for l in leaves)
+    ok = root.entropy is not None and n_leaves >= 1 and all(
+        l.entropy is not None for l in leaves
+    )
     if not ok:
         print("WARNING: Some entropy/node checks failed (see printed summaries).")
 
@@ -122,4 +176,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

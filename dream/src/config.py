@@ -29,7 +29,9 @@ class MCTSConfig:
     adaptive_stepping: bool = False
     min_steps_per_expansion: int = 8
     max_steps_per_expansion: int = 48
-    branch_threshold: float = 1.1  # threshold on H_masked_mean / log(V)
+    # H_masked_mean / log(V) is typically in ~[0, 1]; values >1 are rare. Use
+    # ~0.5–0.8 after entropy profiling; default 0.65 is a plausible mid prior.
+    branch_threshold: float = 0.65
 
     # --- Sampling ---
     # MDLM-style temperature; Dream recommends low temp for code.

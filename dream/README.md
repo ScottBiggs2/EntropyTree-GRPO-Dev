@@ -56,8 +56,9 @@ dream/
 │   ├── trainer.py        # Minimal EntropyMCTSTrainer (one-step loop)
 │   └── utils.py          # Device, model loading, LR scheduler
 ├── scripts/
-│   ├── validate_dream.py   # Phase 0: load Dream 7B, forward + entropy checks
-│   └── single_step_dream.py # One training step with Dream 7B (small tree)
+│   ├── validate_dream.py      # Phase 0: load Dream 7B, forward + entropy checks
+│   ├── validate_dream_tree.py # Small real tree (fixed or adaptive stepping; optional LoRA)
+│   └── single_step_dream.py   # One training step (LoRA, adaptive flags, etc.)
 └── tests/
     ├── __init__.py
     ├── test_entropy_corrected.py
@@ -100,6 +101,52 @@ module.
 
 ---
 
+### Cloud GPU — test checklist (run in order)
+
+Use **repo root** (`cd` to the directory that contains `dream/`). Install deps once:
+
+```bash
+pip install -r dream/requirements.txt
+```
+
+| Step | Command | What “good” looks like |
+|------|---------|------------------------|
+| **1 — Unit tests** (no GPU) | `python -m pytest dream/tests -q` | All pass |
+| **2 — Phase 0: load + logits** | `python dream/scripts/validate_dream.py` | Model loads, entropy in `[0, log(V)]`, no device errors |
+| **3 — Tree, fixed stepping** | `python dream/scripts/validate_dream_tree.py --max-tree-nodes 5 --branch-width 2 --steps-per-expansion 16 --max-new-tokens 128` | `Tree summary`, `Entropy summary`, `leaves >= 1` |
+| **4 — Tree, adaptive stepping** | `python dream/scripts/validate_dream_tree.py --adaptive-stepping --branch-threshold 0.65 --min-steps-per-expansion 8 --max-steps-per-expansion 48 --max-tree-nodes 5 --branch-width 2 --max-new-tokens 128` | Same as above **plus** `steps_in_edge` line with **unique** values (not always identical) when adaptive triggers |
+| **5 — Tree + LoRA** (optional) | `python dream/scripts/validate_dream_tree.py --lora --lora-r 8 --lora-alpha 16` | `[LoRA] trainable params: …`, tree still builds |
+| **6 — One training step (~32GB)** | `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python dream/scripts/single_step_dream.py --lora --profile-memory --max-tree-nodes 5 --max-new-tokens 96 --steps-per-expansion 12` | prints `Metrics:` with finite `loss`; `n_loss_forwards` ≤ `n_transitions` |
+| **7 — Training + adaptive** (optional) | same as 6 **plus** `--adaptive-stepping --branch-threshold 0.65 --min-steps-per-expansion 8 --max-steps-per-expansion 48` | completes; branching uses same config as `validate_dream_tree` |
+
+**Adaptive stepping sanity:** `H/log(V)` is usually **≤ 1**; a threshold **> 1** (e.g. the old `1.1` default) **never** early-stops on that test. If step 4 shows identical `steps_in_edge`, try lowering `--branch-threshold` (e.g. `0.5`) or widening `[min,max]`; see `DEVELOPMENT_PLAN.md` Appendix C.
+
+---
+
+### LoRA size (what to tune)
+
+LoRA is configured in **`MCTSConfig`** and on the CLI for scripts:
+
+| Knob | Typical role | Notes |
+|------|----------------|--------|
+| **`lora_r`** (`--lora-r`) | Rank of the low-rank update | **Larger** → more trainable parameters, more capacity, more VRAM for optimizer/grads. |
+| **`lora_alpha`** (`--lora-alpha`) | Scaling in PEFT | Effective scale is often thought of as **α/r**; e.g. `r=8, α=16` ⇒ scale 2. |
+| **`lora_dropout`** (`--lora-dropout`) | Regularization on adapters | Default `0.0`; increase for heavier regularization. |
+
+Target modules are **fixed** in `dream/src/utils.py` (`apply_lora_to_dream_model`): Dream’s attention + MLP projections (`q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, `down_proj`), not `lm_head`.
+
+**Practical rule:** start with **`r=8`, `alpha=16`**; increase `r` (e.g. 16, 32) if you need more capacity and VRAM allows.
+
+---
+
+### LoRA vs adaptive branching
+
+- **Adaptive branching** is controlled only by tree **`MCTSConfig`**: `adaptive_stepping`, `branch_threshold`, `min_steps_per_expansion`, `max_steps_per_expansion`, plus `branch_width` / `max_tree_nodes`. It does **not** read LoRA-specific fields.
+- **LoRA changes the forward** (base weights + adapters). So entropy at each node, early-stop in `denoise_chunk_adaptive`, and frontier ordering **follow the same code** but with **different logits** than the base model. After a lot of LoRA training, you may want to **re-tune** `branch_threshold` (see Appendix C in `DEVELOPMENT_PLAN.md`).
+- **Recommendation:** validate **adaptive stepping on the base model** first (step 4 above); then enable **`--lora`** for training (step 6) and compare behavior if needed.
+
+---
+
 ### Cloud GPU: Dream 7B full setup
 
 On a cloud machine with sufficient GPU memory (e.g. A100 40GB+):
@@ -127,17 +174,9 @@ On a cloud machine with sufficient GPU memory (e.g. A100 40GB+):
 
    You should see: model load, a short generated snippet, logits shape `[1, L, V]`, and entropy in `[0, log(V)]`. Fix any import or device errors before continuing.
 
-3. **Single training step** (one entropy-MCTS-GRPO step with Dream 7B):
+3. **Tree + training (summary)** — see **Cloud GPU — test checklist** above for `validate_dream_tree.py` and `single_step_dream.py` (including **`--lora`** and **`--adaptive-stepping`**).
 
-   From repo root:
-
-   ```bash
-   python dream/scripts/single_step_dream.py --prompt "Write a Python function to check if a number is prime."
-   ```
-
-   Optional: `--max-tree-nodes 5 --max-new-tokens 128 --steps-per-expansion 16` to reduce VRAM. Uses `SyntaxReward` by default; for execution-based reward see Step 4 below.
-
-   **Why tree validation can work but `single_step_dream.py` OOMs**: full **7B fine-tune** needs ~14GB weights + ~14GB grads (bf16) before activations — **SGD that still OOMs means Adam was not the problem**. Use **`--lora`** (PEFT; `pip install -r dream/requirements.txt`) on ~32GB GPUs. The loss groups **sibling edges** (one forward per parent); metrics include `n_loss_forwards` ≤ `n_transitions`. See **`dream/DEVELOPMENT_PLAN.md` Appendix D** for math + checklist. Also: `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`, `--profile-memory`, smaller `--max-new-tokens` if needed.
+   **Full fine-tune vs ~32GB:** full **7B** fine-tune needs ~14GB weights + ~14GB grads (bf16) before activations. Use **`--lora`** on ~32GB GPUs. The loss groups **sibling edges**; metrics include `n_loss_forwards` ≤ `n_transitions`. See **`dream/DEVELOPMENT_PLAN.md` Appendix D**. Also: `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`, `--profile-memory`, smaller `--max-new-tokens` if needed.
 
 4. **Use Dream in your own training loop**: load with `dream.src.utils.load_model_and_tokenizer`
    and `MCTSConfig(model_type="dream", model_name_or_path="Dream-org/Dream-v0-Instruct-7B")`.

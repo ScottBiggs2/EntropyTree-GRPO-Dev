@@ -104,7 +104,36 @@ def main():
         "--lora-alpha",
         type=int,
         default=16,
-        help="LoRA alpha (default 16)",
+        help="LoRA alpha (scaling; effective scale ≈ alpha/r). Default 16 with r=8.",
+    )
+    p.add_argument(
+        "--lora-dropout",
+        type=float,
+        default=0.0,
+        help="LoRA dropout (default 0)",
+    )
+    p.add_argument(
+        "--adaptive-stepping",
+        action="store_true",
+        help="Entropy-threshold adaptive steps per expansion (see MCTSConfig.branch_threshold)",
+    )
+    p.add_argument(
+        "--branch-threshold",
+        type=float,
+        default=0.65,
+        help="Early-stop micro-steps when H_masked_mean/log(V) exceeds this (adaptive; typical 0.5–0.8)",
+    )
+    p.add_argument(
+        "--min-steps-per-expansion",
+        type=int,
+        default=8,
+        help="Min denoise micro-steps before adaptive can stop (adaptive mode)",
+    )
+    p.add_argument(
+        "--max-steps-per-expansion",
+        type=int,
+        default=48,
+        help="Cap on denoise micro-steps per expansion (adaptive mode)",
     )
     p.add_argument(
         "--no-gradient-checkpointing",
@@ -130,6 +159,11 @@ def main():
         use_lora=args.lora,
         lora_r=args.lora_r,
         lora_alpha=args.lora_alpha,
+        lora_dropout=args.lora_dropout,
+        adaptive_stepping=args.adaptive_stepping,
+        branch_threshold=args.branch_threshold,
+        min_steps_per_expansion=args.min_steps_per_expansion,
+        max_steps_per_expansion=args.max_steps_per_expansion,
     )
     model, tokenizer = load_model_and_tokenizer(cfg)
     if getattr(cfg, "gradient_checkpointing", False) and hasattr(

@@ -119,7 +119,7 @@ class MCTSConfig:
     adaptive_stepping: bool = False
     min_steps_per_expansion: int = 8
     max_steps_per_expansion: int = 48
-    branch_threshold: float = 1.1
+    branch_threshold: float = 0.65  # H_masked_mean / log(V); must be <~1 to ever early-stop
 
     # --- Sampling ---
     temperature: float = 0.2  # Dream recommends low temp for code
@@ -855,9 +855,9 @@ class EntropyGuidedTreeBuilder:
 
 ### Adaptive branching design notes
 
-The entropy threshold uses the **corrected analytic normalization** (`H_masked_mean / log(V)`) consistently with Step 2. The threshold `branch_threshold` (default 1.1) means "branch when uncertainty exceeds 110% of the theoretical maximum" — in practice, this should trigger when the model is highly confused (near-uniform distribution over tokens at the masked positions).
+The entropy threshold uses the **corrected analytic normalization** (`H_masked_mean / log(V)`) consistently with Step 2. For Shannon entropy per token, \(H \le \log V\) (nats), so this ratio is typically **in \([0, 1]\)**. A default **`branch_threshold` > 1** therefore **never** fires the early-stop branch (bug we fixed: prior default `1.1`). Use **~0.5–0.8** after entropy profiling; `MCTSConfig.branch_threshold` default is **0.65** as a mid prior.
 
-For calibrated operation, a `branch_threshold` around 0.5–0.8 is more realistic (actual entropy is usually well below `log(V)`). The exact value should be tuned based on Phase 0 entropy profiling with the Dream model. Document the empirical range in config comments.
+**Semantics:** after `min_steps`, we **break** (end the micro-chunk) when `H_\text{masked,mean} / \log(V) > \text{branch_threshold}` — i.e. stop when masked positions are **sufficiently uncertain** (good branch point). Tune `branch_threshold` against the empirical `H/log(V)` curve from `validate_dream.py`.
 
 ### Verification
 
