@@ -8,9 +8,8 @@ Uses SyntaxReward for quick iteration; switch to ExecutionLiteReward for real co
 Usage (from repo root):
   python dream/scripts/single_step_dream.py [--prompt "your prompt"]
 
-Requires enough VRAM for 7B + AdamW + backward (often ~32GB interactive;
-tune --max-new-tokens / --max-tree-nodes). Trainer uses per-transition backward
-by default to reduce peak memory (see MCTSConfig.loss_backward_per_transition).
+Default full fine-tune needs ~40GB+ VRAM (weights+grads ~28GB bf16 + activations).
+On ~32GB use --lora (PEFT). Sibling-grouped loss: see n_loss_forwards in metrics.
 """
 import argparse
 import sys
@@ -95,6 +94,23 @@ def main():
         action="store_true",
         help="Print torch.cuda.max_memory_allocated() after the step (GB)",
     )
+    p.add_argument(
+        "--lora",
+        action="store_true",
+        help="PEFT LoRA on Dream layers (recommended on ~32GB — full FT needs ~28GB+ weights+grads alone)",
+    )
+    p.add_argument("--lora-r", type=int, default=8, help="LoRA rank (default 8)")
+    p.add_argument(
+        "--lora-alpha",
+        type=int,
+        default=16,
+        help="LoRA alpha (default 16)",
+    )
+    p.add_argument(
+        "--no-gradient-checkpointing",
+        action="store_true",
+        help="Disable gradient checkpointing (sometimes trades VRAM vs peak during backward)",
+    )
     args = p.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -110,10 +126,15 @@ def main():
         max_new_tokens=args.max_new_tokens,
         steps_per_expansion=args.steps_per_expansion,
         total_denoising_steps=min(256, args.max_new_tokens),
-        gradient_checkpointing=True,
+        gradient_checkpointing=not args.no_gradient_checkpointing,
+        use_lora=args.lora,
+        lora_r=args.lora_r,
+        lora_alpha=args.lora_alpha,
     )
     model, tokenizer = load_model_and_tokenizer(cfg)
-    if getattr(cfg, "gradient_checkpointing", False) and hasattr(model, "gradient_checkpointing_enable"):
+    if getattr(cfg, "gradient_checkpointing", False) and hasattr(
+        model, "gradient_checkpointing_enable"
+    ):
         model.gradient_checkpointing_enable()
     model.train()
 

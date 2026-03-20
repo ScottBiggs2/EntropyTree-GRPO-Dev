@@ -1519,7 +1519,7 @@ This appendix explains **why `loss_backward_per_transition` alone may not fix OO
 | Phase | Code | `grad` / mode | What runs |
 |--------|------|---------------|-----------|
 | **A — Tree** | `EntropyGuidedTreeBuilder.build_tree` | `torch.no_grad()`, `model.eval()` | Many **full-sequence** forwards: length \(L \approx\) `prompt_len + max_new_tokens`. Per expansion: up to `branch_width` × `steps_per_expansion` adapter forwards; completion (`_denoise_to_completion`) adds more. Entropy uses additional forwards. |
-| **B — Loss** | `WeightedGRPOLoss.compute_loss` → `_log_prob_transition` | `model.train()`, autograd **on** | **One forward per tree edge** (parent → child): `adapter.forward_logits` on **entire** `parent_state` \([1, L, V]\), then `log_softmax` and gather at child tokens. |
+| **B — Loss** | `WeightedGRPOLoss.compute_loss` | `model.train()`, autograd **on** | **One forward per distinct parent node** (default `loss_group_by_parent=True`): siblings share `parent_state`, so we run `adapter.forward_logits` once per parent, add all child log-prob terms, then **one backward per parent group**. Metric `n_loss_forwards` ≤ `n_transitions`. |
 
 **Retained after phase A (GPU):**
 
@@ -1527,37 +1527,49 @@ This appendix explains **why `loss_backward_per_transition` alone may not fix OO
 - **Every** `MCTSNode.state` and `attention_mask` (`LongTensor` on device) — size \(\mathcal{O}(\text{nodes} \times L)\); negligible vs weights.
 - **No** autograd graph from phase A.
 
-**Phase B peak (per edge, sequential if `loss_backward_per_transition=True`):**
+**Phase B peak (per parent group, sequential):**
 
-- Weights + **optimizer state** (AdamW: two moments per parameter; often the dominant term if stored in fp32).
+- Weights + **gradients for all trainable parameters** (full fine-tune: same order as weights in bf16, ~14GB each → ~28GB before activations).
+- **Optimizer state** (AdamW adds two fp32 moments per param if used — **if SGD still OOMs, optimizer is not the binding constraint**).
 - **One** full transformer forward + backward with **gradient checkpointing** (Dream sets `use_cache=False` when checkpointing is on).
-- Final **logits** buffer \([L, V]\) and backward through projection — scales with \(L \times V\).
+- Final **logits** buffer \([L, V]\) — scales with \(L \times V\).
 
-So: **per-transition backward removes stitching *multiple edges* into one autograd graph**, but **does not reduce the peak of a *single* edge’s backward** through 7B. If that single-edge peak + optimizer + weights ≈ full VRAM, you still OOM (often on the last ~100–200MB allocation — fragmentation + peak).
+**Per-group backward** (default): stitches only **sibling** edges that share a parent into one subgraph before backward; peak through the trunk is still **one** full 7B backward. **LoRA** shrinks trainable params so weight+grad footprint drops to \(\mathcal{O}(\text{LoRA params})\).
 
 ### D.2 Scaling (order of magnitude)
 
-Let \(T\) = number of tree transitions (edges) = `n_transitions` in metrics (same as edges in the built tree).
+Let \(T\) = `n_transitions`, \(G\) = number of distinct parent tensors = `n_loss_forwards` (≤ \(T\), often ≈ internal nodes with ≥1 child).
 
-- **Wall time** for loss: \(\mathcal{O}(T)\) sequential forwards + backwards.
-- **Peak VRAM** (with `loss_backward_per_transition=True`): \(\mathcal{O}(1)\) in \(T\) — dominated by **one** full backward, not \(T\) times the peak (graphs are freed between edges).
+- **Wall time** for loss: **\(G\)** forwards + **\(G\)** backwards (grouped path), not \(T\) of each.
+- **Peak VRAM**: still \(\mathcal{O}(1)\) in \(T\) — one backward at a time; grouping saves **time** and **autograd graph size**, not the asymptotic **single-backward** activation peak through 7B.
 - **Sequence length** \(L\): linear in activations through layers; **vocab** \(V\): logits row is \(\mathcal{O}(L \times V)\).
 
 Concrete sanity check (not exact): \(L=512\), \(V \approx 1.5\times10^5\) → logits alone in fp16 \(\approx 512 \times 152064 \times 2 \,\mathrm{B} \approx 150\,\mathrm{MB}\) per tensor life; full layer stack is much larger.
 
+### D.2b Full fine-tune vs ~32GB (empirical lesson)
+
+Rough accounting for **7B** in bf16:
+
+- **Weights** \(\approx 14\) GB.
+- **Gradients** (one backward) \(\approx 14\) GB if stored in bf16 for all params.
+- **Total \(\approx 28\) GB** before any activation / checkpoint / cudnn workspace — **already near a 32GB cap**.
+
+So if **`--optimizer sgd` still OOMs**, that **confirms** the limit is **weights + grads + backward workspace**, not Adam. The practical fix on one GPU is **PEFT LoRA** (or multi-GPU sharding), not more tree micro-optimizations alone.
+
 ### D.3 Why this is a “deeper” optimization problem
 
 1. **Loss requires \(p(\text{child}\mid\text{parent})\)** under the **current** policy. That is computed by a **full forward** on the parent diffusion state. There is no implemented shortcut that only runs a subset of layers without Dream API support.
-2. **Caching KV from tree build** for loss is **not** automatically valid for training: build runs under `no_grad`; recomputing with grad is required for policy-gradient correctness unless you adopt an explicit off-policy / replay objective (research).
-3. **Sparsifying `log_softmax` over \(V\)** (e.g. only at masked indices) still needs hidden states at those positions from the stack — memory win is possible with custom kernels / model hooks, not yet in this repo.
+2. **Tree-shaped win we *can* use**: **siblings share one parent state** — mathematically \(\sum_i \nabla \log p(c_i\mid p) = \nabla \sum_i \log p(c_i\mid p)\) when logits are shared. Implemented as **`loss_group_by_parent`** (default `True` in `MCTSConfig`).
+3. **Caching KV from tree build** for loss is **not** automatically valid for training: build runs under `no_grad`; recomputing with grad is required for policy-gradient correctness unless you adopt an explicit off-policy / replay objective (research).
+4. **Sparsifying `log_softmax` over \(V\)** (e.g. only at masked indices) still needs hidden states at those positions from the stack — memory win is possible with custom kernels / model hooks, not yet in this repo.
 
 ### D.4 Mitigation tiers (recommended order)
 
 **Tier 0 — Measure (verifiable)**
 
-1. Run `single_step_dream.py` with `--profile-memory` and note `peak CUDA allocated` and metric `n_transitions`.
+1. Run `single_step_dream.py` with `--profile-memory` and note `peak CUDA allocated`, `n_transitions`, and **`n_loss_forwards`** (should be ≤ `n_transitions` when grouping is on).
 2. Set env `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` and retry (reduces fragmentation OOMs that look like “need 130MB”).
-3. Confirm failure phase: tree-only script (`validate_dream_tree.py`) succeeding while `single_step_dream.py` fails implies bottleneck is **phase B + optimizer**, not tree sampling.
+3. Confirm failure phase: tree-only script (`validate_dream_tree.py`) succeeding while `single_step_dream.py` fails implies bottleneck is **phase B + weights/grads**, not tree sampling.
 
 **Tier 1 — Knobs (no new algorithms)**
 
@@ -1567,16 +1579,16 @@ Concrete sanity check (not exact): \(L=512\), \(V \approx 1.5\times10^5\) → lo
 
 **Tier 2 — Optimizer / training mode**
 
-- **`--optimizer sgd`** in `single_step_dream.py`: removes Adam’s two moment tensors — useful **only** for smoke tests (different dynamics than production AdamW).
-- **8-bit / paged optimizers** (e.g. `bitsandbytes`): lower optimizer footprint.
-- **LoRA / adapters**: train \(\ll\) full parameter count; optimizer scales with trainable params.
-- **Multi-GPU**: FSDP / DeepSpeed ZeRO for sharded optimizer states.
+- **`--lora`** in `single_step_dream.py` (requires `peft` in `dream/requirements.txt`): **primary fix for ~32GB** — trains adapter matrices only; base Dream weights stay frozen; gradients are tiny.
+- **`--optimizer sgd`**: if this **still** OOMs, Adam was never the issue; proceed to LoRA or more VRAM.
+- **8-bit / paged optimizers** (e.g. `bitsandbytes`): lower optimizer footprint once trainable set is already small.
+- **Multi-GPU**: FSDP / DeepSpeed ZeRO for sharded full fine-tune.
 
 **Tier 3 — Algorithm / implementation (future work)**
 
-- **CPU-side tree states**: store `MCTSNode.state` on CPU; move one edge at a time to GPU in `_log_prob_transition` — saves little VRAM (states are small) but can help fragmentation and keeps GPU reserved blocks smaller between phases.
-- **Micro-batch edges**: if multiple edges shared a subgraph (they do not today), batching could amortize kernel launch; current parent states differ → still one forward per edge.
-- **Approximate objectives** that only need logits on a **window** around masks (would need theory + Dream changes).
+- **CPU-side tree states**: store `MCTSNode.state` on CPU; move one edge at a time to GPU — saves little VRAM (states are small) but can help fragmentation.
+- **Parent-grouped loss** (implemented): `MCTSConfig.loss_group_by_parent` — one 7B forward per parent for all children; fewer passes and smaller graph than per-edge forwards.
+- **Approximate objectives** / **windowed logits** (would need theory + Dream changes).
 
 ### D.5 Verifiable checklist (copy-paste)
 
@@ -1586,13 +1598,19 @@ PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
   python dream/scripts/single_step_dream.py --profile-memory \
   --max-tree-nodes 5 --max-new-tokens 128 --steps-per-expansion 16
 
-# V2 — Smoke test with lower optimizer memory (SGD)
+# V2 — SGD (if this still OOMs, optimizer was never the bottleneck)
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
   python dream/scripts/single_step_dream.py --optimizer sgd \
   --max-tree-nodes 5 --max-new-tokens 96 --steps-per-expansion 12
+
+# V3 — LoRA (expected to work on ~32GB interactive)
+pip install 'peft>=0.13.0'   # if not already from dream/requirements.txt
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+  python dream/scripts/single_step_dream.py --lora --profile-memory \
+  --max-tree-nodes 5 --max-new-tokens 96 --steps-per-expansion 12
 ```
 
-**Success criteria for V2 (interactive 32GB):** one step completes without `CUDA out of memory` (exact tokens/nodes depend on cluster). If SGD passes but AdamW fails, prioritize **optimizer sharding / 8-bit Adam / LoRA** before rewriting the tree.
+**Success criteria:** V3 should complete on typical 32GB GPUs. Compare `n_loss_forwards` vs `n_transitions` to see sibling grouping. For **full** fine-tune on one GPU, plan on **40GB+** or ZeRO/FSDP.
 
 ---
 
@@ -1601,7 +1619,7 @@ PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
 | OOM during tree building | Medium | High | Gradient checkpointing; reduce `max_tree_nodes` to 10; reduce `max_new_tokens` to 128 |
-| OOM during loss / backward (32GB, 7B full fine-tune) | High | High | **Appendix D**; `expandable_segments`; `--optimizer sgd` smoke test; 8-bit Adam / LoRA / more VRAM |
+| OOM during loss / backward (32GB, 7B) | High | High | **`--lora`** (PEFT); Appendix D; SGD still OOM ⇒ use LoRA or 40GB+ / ZeRO |
 | Right-shift logits applied incorrectly | Medium | High | Phase 8: compare adapter entropy to Dream's internal `alg="entropy"` ordering |
 | `transformers==4.46.2` version conflict | High | Medium | Separate conda/venv for Dream |
 | Branch threshold poorly calibrated | Medium | Medium | Phase 8 entropy profiling; start conservative |
@@ -1622,3 +1640,5 @@ PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 | Dream right-shift | `dream/src/model_adapter.py` | Inside `forward_logits` for `model_type="dream"` |
 | Dream categorical sampling | `dream/src/model_adapter.py` | `_dream_sample()` |
 | Edge step tracking | `dream/src/tree_node.py` | `MCTSNode.steps_in_edge`, `TreeTransition.child_step_index` |
+| Sibling-grouped loss forwards | `dream/src/loss.py` | `_parent_groups()`, `loss_group_by_parent` |
+| Dream + LoRA load | `dream/src/utils.py` | `apply_lora_to_dream_model()`, `MCTSConfig.use_lora` |

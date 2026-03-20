@@ -69,12 +69,20 @@ class MCTSConfig:
     warmup_ratio: float = 0.1
     min_lr_ratio: float = 0.05
     gradient_checkpointing: bool = True
+    # PEFT LoRA: only adapter weights are trainable — required for ~32GB + full
+    # sequence backward on 7B (full fine-tune needs ~28GB+ just weights+grads).
+    use_lora: bool = False
+    lora_r: int = 8
+    lora_alpha: int = 16
+    lora_dropout: float = 0.0
     # If True, call backward() once per tree transition instead of on mean(loss).
     # Same gradients, much lower peak VRAM (important for 7B on ~24–32GB GPUs).
     loss_backward_per_transition: bool = True
     # After tree build (no_grad), release cached blocks to reduce fragmentation
     # before the first training forward (see DEVELOPMENT_PLAN Appendix D).
     cuda_empty_cache_after_tree: bool = True
+    # One forward(parent) for all sibling edges; same gradients, fewer 7B passes.
+    loss_group_by_parent: bool = True
 
     # --- Experiment metadata ---
     num_epochs: int = 2

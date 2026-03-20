@@ -73,4 +73,5 @@ def test_entropy_mcts_trainer_single_step_runs():
     assert "loss" in metrics
     assert metrics["tree_nodes"] >= 1.0
     assert metrics["tree_leaves"] >= 1.0
+    assert metrics.get("n_loss_forwards", 0) <= metrics.get("n_transitions", 0)
 

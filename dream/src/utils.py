@@ -9,6 +9,46 @@ import torch
 from dream.src.config import MCTSConfig
 
 
+def apply_lora_to_dream_model(model: torch.nn.Module, config: MCTSConfig) -> torch.nn.Module:
+    """Wrap Dream with PEFT LoRA on attention + MLP linears (Llama-style names)."""
+    try:
+        from peft import LoraConfig, get_peft_model  # type: ignore
+    except ImportError as e:
+        raise ImportError(
+            "Dream LoRA needs PEFT. Install with: pip install 'peft>=0.13.0' "
+            "(listed in dream/requirements.txt)."
+        ) from e
+
+    lc = LoraConfig(
+        r=config.lora_r,
+        lora_alpha=config.lora_alpha,
+        lora_dropout=config.lora_dropout,
+        target_modules=[
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+        ],
+        bias="none",
+    )
+    model = get_peft_model(model, lc)
+    # Gradient checkpointing + LoRA: inputs must require grad for checkpoint backward.
+    if getattr(config, "gradient_checkpointing", False) and hasattr(
+        model, "enable_input_require_grads"
+    ):
+        model.enable_input_require_grads()
+    n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    n_total = sum(p.numel() for p in model.parameters())
+    print(
+        f"[LoRA] trainable params: {n_trainable:,} / {n_total:,} "
+        f"({100.0 * n_trainable / max(n_total, 1):.4f}%)"
+    )
+    return model
+
+
 def get_device() -> str:
     """CUDA if available (cloud GPU), else MPS, else CPU."""
     if torch.cuda.is_available():
@@ -42,6 +82,8 @@ def load_model_and_tokenizer(config: MCTSConfig) -> Tuple[Any, Any]:
             trust_remote_code=True,
             torch_dtype=torch.bfloat16,
         ).to(device)
+        if getattr(config, "use_lora", False):
+            model = apply_lora_to_dream_model(model, config)
         tokenizer = AutoTokenizer.from_pretrained(
             model_name,
             trust_remote_code=True,

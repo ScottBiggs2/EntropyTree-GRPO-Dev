@@ -137,7 +137,7 @@ On a cloud machine with sufficient GPU memory (e.g. A100 40GB+):
 
    Optional: `--max-tree-nodes 5 --max-new-tokens 128 --steps-per-expansion 16` to reduce VRAM. Uses `SyntaxReward` by default; for execution-based reward see Step 4 below.
 
-   **Why tree validation can work but `single_step_dream.py` OOMs**: inference-only tree building stays in `eval()` and does not keep a giant autograd graph. The loss phase still runs a **full 7B forward+backward per tree edge**; **`loss_backward_per_transition`** only avoids stitching *all* edges into one graph — **peak VRAM per edge** (weights + optimizer + one backward) can still fill ~32GB. See **`dream/DEVELOPMENT_PLAN.md` Appendix D** for the full accounting and mitigation tiers. Quick tries: `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`, `--profile-memory`, smaller `--max-new-tokens`, **`--optimizer sgd`** for smoke tests (drops Adam state), then 8-bit Adam / LoRA / more VRAM for real runs.
+   **Why tree validation can work but `single_step_dream.py` OOMs**: full **7B fine-tune** needs ~14GB weights + ~14GB grads (bf16) before activations — **SGD that still OOMs means Adam was not the problem**. Use **`--lora`** (PEFT; `pip install -r dream/requirements.txt`) on ~32GB GPUs. The loss groups **sibling edges** (one forward per parent); metrics include `n_loss_forwards` ≤ `n_transitions`. See **`dream/DEVELOPMENT_PLAN.md` Appendix D** for math + checklist. Also: `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`, `--profile-memory`, smaller `--max-new-tokens` if needed.
 
 4. **Use Dream in your own training loop**: load with `dream.src.utils.load_model_and_tokenizer`
    and `MCTSConfig(model_type="dream", model_name_or_path="Dream-org/Dream-v0-Instruct-7B")`.
