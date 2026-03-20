@@ -92,20 +92,68 @@ class ModelAdapter:
         temperature: float,
         top_p: float,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Sample only on masked positions.
+
+        Dream sometimes produces degenerate probability tensors on
+        non-masked positions after top-p filtering in bf16 (all zeros),
+        which breaks `torch.distributions.Categorical`.
+        """
+        if logits.dim() != 2:
+            raise ValueError(f"Expected logits shape [L, V], got {logits.shape}")
+
+        L, V = logits.shape
+        if mask_positions.shape[0] != L:
+            raise ValueError(
+                f"mask_positions shape mismatch: {mask_positions.shape} vs logits {logits.shape}"
+            )
+
+        # Defaults for non-masked positions (caller will ignore x0 there).
+        x0 = torch.zeros(L, dtype=torch.long, device=logits.device)
+        conf = torch.full((L,), -1e9, dtype=logits.dtype, device=logits.device)
+
+        if not mask_positions.any():
+            return x0, conf
+
+        idx = mask_positions.nonzero(as_tuple=False).squeeze(-1)  # [M]
+        logits_m = logits.index_select(0, idx)  # [M, V]
+
         if temperature > 0:
-            logits_t = logits / temperature
+            logits_t = logits_m / temperature
             logits_t = self._top_p_filter(logits_t, top_p)
             probs = F.softmax(logits_t, dim=-1)
-            x0 = dists.Categorical(probs=probs).sample()
+
+            # Safety: if probs are degenerate (all zeros / non-finite), fallback to argmax.
+            row_sums = probs.sum(dim=-1)
+            invalid = (~torch.isfinite(row_sums)) | (row_sums <= 0)
+            if invalid.any():
+                x0_m = torch.argmax(logits_t, dim=-1)
+                # Use a normalized one-hot for confidence on invalid rows.
+                conf_m = torch.zeros_like(x0_m, dtype=logits.dtype)
+                if (~invalid).any():
+                    good_idx = (~invalid).nonzero(as_tuple=False).squeeze(-1)
+                    probs_good = probs.index_select(0, good_idx)
+                    x0_good = dists.Categorical(probs=probs_good).sample()
+                    conf_good = torch.gather(
+                        probs_good, -1, x0_good.unsqueeze(-1)
+                    ).squeeze(-1)
+                    x0_m = x0_m.clone()
+                    conf_m = conf_m.clone()
+                    x0_m[good_idx] = x0_good
+                    conf_m[good_idx] = conf_good
+                x0[idx] = x0_m
+                conf[idx] = conf_m
+                return x0, conf
+
+            x0_m = dists.Categorical(probs=probs).sample()
+            conf_m = torch.gather(probs, -1, x0_m.unsqueeze(-1)).squeeze(-1)
         else:
-            x0 = torch.argmax(logits, dim=-1)
-            probs = F.softmax(logits, dim=-1)
-        conf = torch.gather(probs, -1, x0.unsqueeze(-1)).squeeze(-1)
-        conf = torch.where(
-            mask_positions,
-            conf,
-            torch.full_like(conf, -1e9),
-        )
+            x0_m = torch.argmax(logits_m, dim=-1)
+            probs = F.softmax(logits_m, dim=-1)
+            conf_m = torch.gather(probs, -1, x0_m.unsqueeze(-1)).squeeze(-1)
+
+        x0[idx] = x0_m
+        conf[idx] = conf_m
         return x0, conf
 
     def _mdlm_sample(
@@ -134,7 +182,7 @@ class ModelAdapter:
         cumulative_probs = torch.cumsum(probs, dim=-1)
         # Mask tokens above the nucleus threshold.
         mask = cumulative_probs > top_p
-        # Ensure at least one token is kept.
+        # Ensure at least one token is kept even if top_p is tiny.
         mask[..., 0] = False
         sorted_logits = sorted_logits.masked_fill(mask, float("-inf"))
         # Scatter back to original order.
