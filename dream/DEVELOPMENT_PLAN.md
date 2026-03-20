@@ -631,6 +631,8 @@ class ModelAdapter:
         return torch.arange(L, device=input_ids.device).unsqueeze(0).expand(B, -1)
 ```
 
+**Implementation note (matches Dream upstream)**: The live `dream/src/model_adapter.py` uses `_dream_top_p_logits`, copied from Hugging Face `Dream-org/Dream-v0-Instruct-7B` `generation_utils.top_p_logits` (shifted `sorted_indices_to_remove` mask + scatter + `torch.finfo(dtype).min`, not `-inf`). `_dream_sample` applies softmax and `Categorical.sample()` in **float32** so bf16 logits do not underflow to all-zero probs on CUDA; on any sampling failure it falls back like upstream `sample_tokens` (`probs.max`). Only masked rows are sampled; confidences at non-mask positions stay large negative for the tree builder.
+
 ### Test specification
 
 Create `dream/tests/test_model_adapter.py`:

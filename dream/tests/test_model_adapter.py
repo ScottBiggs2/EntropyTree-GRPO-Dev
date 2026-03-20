@@ -63,3 +63,31 @@ def test_transfer_count_mdlm_uniform():
     k = adapter.transfer_count(n_masked=100, step=0, total_steps=10)
     assert k == 10
 
+
+class _MockDreamModel(nn.Module):
+    """Minimal module so ModelAdapter(..., model_type='dream') has config + device."""
+
+    def __init__(self, vocab_size: int = 1024):
+        super().__init__()
+        self.config = type("Cfg", (), {"vocab_size": vocab_size})()
+        self._p = nn.Parameter(torch.zeros(1))
+
+    def forward(self, *args, **kwargs):
+        raise RuntimeError("not used in sampling tests")
+
+
+def test_dream_sample_bf16_top_p_no_crash():
+    """Regression: bf16 logits + top_p used to yield all-zero probs / Categorical error."""
+    model = _MockDreamModel(vocab_size=4096)
+    tok = _MockTokenizer(mask_token_id=99, vocab_size=4096)
+    adapter = ModelAdapter(model, tok, model_type="dream")
+    logits = torch.randn(128, 4096, dtype=torch.bfloat16)
+    mask = torch.ones(128, dtype=torch.bool)
+    x0, conf = adapter.sample_and_confidence(
+        logits, mask_positions=mask, temperature=1.0, top_p=0.95
+    )
+    assert x0.shape == (128,)
+    assert conf.shape == (128,)
+    assert torch.isfinite(conf[mask]).all()
+    assert (conf[mask] >= 0).all()
+

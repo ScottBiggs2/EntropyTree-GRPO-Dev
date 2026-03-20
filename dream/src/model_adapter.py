@@ -92,12 +92,11 @@ class ModelAdapter:
         temperature: float,
         top_p: float,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Sample only on masked positions.
+        """Sample only on masked positions.
 
-        Dream sometimes produces degenerate probability tensors on
-        non-masked positions after top-p filtering in bf16 (all zeros),
-        which breaks `torch.distributions.Categorical`.
+        Follows Dream ``generation_utils.sample_tokens``: top-p via shifted
+        nucleus mask + ``finfo.min`` masking, softmax and ``Categorical`` in
+        float32, with max-prob fallback if sampling fails.
         """
         if logits.dim() != 2:
             raise ValueError(f"Expected logits shape [L, V], got {logits.shape}")
@@ -120,37 +119,24 @@ class ModelAdapter:
 
         if temperature > 0:
             logits_t = logits_m / temperature
-            logits_t = self._top_p_filter(logits_t, top_p)
-            probs = F.softmax(logits_t, dim=-1)
-
-            # Safety: if probs are degenerate (all zeros / non-finite), fallback to argmax.
-            row_sums = probs.sum(dim=-1)
-            invalid = (~torch.isfinite(row_sums)) | (row_sums <= 0)
-            if invalid.any():
-                x0_m = torch.argmax(logits_t, dim=-1)
-                # Use a normalized one-hot for confidence on invalid rows.
-                conf_m = torch.zeros_like(x0_m, dtype=logits.dtype)
-                if (~invalid).any():
-                    good_idx = (~invalid).nonzero(as_tuple=False).squeeze(-1)
-                    probs_good = probs.index_select(0, good_idx)
-                    x0_good = dists.Categorical(probs=probs_good).sample()
-                    conf_good = torch.gather(
-                        probs_good, -1, x0_good.unsqueeze(-1)
-                    ).squeeze(-1)
-                    x0_m = x0_m.clone()
-                    conf_m = conf_m.clone()
-                    x0_m[good_idx] = x0_good
-                    conf_m[good_idx] = conf_good
-                x0[idx] = x0_m
-                conf[idx] = conf_m
-                return x0, conf
-
-            x0_m = dists.Categorical(probs=probs).sample()
-            conf_m = torch.gather(probs, -1, x0_m.unsqueeze(-1)).squeeze(-1)
+            logits_t = self._dream_top_p_logits(logits_t, top_p)
+            # FP32 softmax + sampling: bf16 underflows to all-zero probs otherwise
+            # (breaks torch.distributions.Categorical simplex checks on GPU).
+            logits_32 = logits_t.float()
+            probs = F.softmax(logits_32, dim=-1)
+            try:
+                x0_m = dists.Categorical(probs=probs).sample()
+                conf_m = torch.gather(probs, -1, x0_m.unsqueeze(-1)).squeeze(-1)
+            except Exception:
+                # Same fallback as Dream `generation_utils.sample_tokens`.
+                conf_m, x0_m = probs.max(dim=-1)
+            conf_m = conf_m.to(logits.dtype)
         else:
             x0_m = torch.argmax(logits_m, dim=-1)
-            probs = F.softmax(logits_m, dim=-1)
-            conf_m = torch.gather(probs, -1, x0_m.unsqueeze(-1)).squeeze(-1)
+            probs = F.softmax(logits_m.float(), dim=-1)
+            conf_m = torch.gather(probs, -1, x0_m.unsqueeze(-1)).squeeze(-1).to(
+                logits.dtype
+            )
 
         x0[idx] = x0_m
         conf[idx] = conf_m
@@ -173,20 +159,29 @@ class ModelAdapter:
         )
         return x0, conf
 
-    def _top_p_filter(self, logits: torch.Tensor, top_p: float) -> torch.Tensor:
-        """Apply top-p filtering to logits along the vocabulary dimension."""
-        if top_p <= 0 or top_p >= 1:
+    @staticmethod
+    def _dream_top_p_logits(logits: torch.Tensor, top_p: float) -> torch.Tensor:
+        """Nucleus filter matching Dream HF `generation_utils.top_p_logits`.
+
+        Uses (1) FP32 softmax for cumulative mass, (2) the shifted remove mask
+        so the boundary token is kept, and (3) `finfo(dtype).min` instead of
+        `-inf` for masked logits (Dream upstream).
+        """
+        if top_p is None or top_p <= 0 or top_p >= 1:
             return logits
         sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
-        probs = F.softmax(sorted_logits, dim=-1)
-        cumulative_probs = torch.cumsum(probs, dim=-1)
-        # Mask tokens above the nucleus threshold.
-        mask = cumulative_probs > top_p
-        # Ensure at least one token is kept even if top_p is tiny.
-        mask[..., 0] = False
-        sorted_logits = sorted_logits.masked_fill(mask, float("-inf"))
-        # Scatter back to original order.
-        return torch.zeros_like(logits).scatter(-1, sorted_indices, sorted_logits)
+        cumulative_probs = torch.cumsum(
+            F.softmax(sorted_logits.float(), dim=-1), dim=-1
+        )
+        sorted_indices_to_remove = cumulative_probs > top_p
+        sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[
+            ..., :-1
+        ].clone()
+        sorted_indices_to_remove[..., 0] = False
+        mask = torch.zeros(logits.shape, dtype=torch.bool, device=logits.device)
+        mask = mask.scatter(-1, sorted_indices, sorted_indices_to_remove)
+        finfo_min = torch.finfo(logits.dtype).min
+        return logits.masked_fill(mask, finfo_min)
 
     def _compute_tok_idx(self, input_ids: torch.Tensor) -> torch.Tensor:
         """Compute position ids for Dream when there is no padding."""
