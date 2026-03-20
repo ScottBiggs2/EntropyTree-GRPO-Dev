@@ -1231,6 +1231,8 @@ Then repeat with `adaptive_stepping=True`:
 
 ### Key training considerations for 7B
 
+**Memory**: Full fine-tuning on **32GB** may OOM during **loss backward** even when the tree build succeeds — see **Appendix D** (per-edge forward+backward + optimizer, not “tree graph size”). Use `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`, `--profile-memory`, smaller `max_new_tokens`, or `--optimizer sgd` for smoke tests before committing to AdamW / LoRA / 8-bit optim / larger GPU.
+
 ```python
 model.gradient_checkpointing_enable()
 
@@ -1508,11 +1510,98 @@ A good starting point is `branch_threshold` = median of the empirical `H/log(V)`
 
 ---
 
-## Appendix D: Risk Register
+## Appendix D: Tree forwards vs GRPO loss — GPU memory (deep dive)
+
+This appendix explains **why `loss_backward_per_transition` alone may not fix OOM** on ~32GB GPUs with Dream 7B, and lists **optimization options** in priority order. It mirrors the actual call graph in `dream/src/tree_builder.py`, `dream/src/loss.py`, and `dream/src/trainer.py`.
+
+### D.1 Two phases, two different memory stories
+
+| Phase | Code | `grad` / mode | What runs |
+|--------|------|---------------|-----------|
+| **A — Tree** | `EntropyGuidedTreeBuilder.build_tree` | `torch.no_grad()`, `model.eval()` | Many **full-sequence** forwards: length \(L \approx\) `prompt_len + max_new_tokens`. Per expansion: up to `branch_width` × `steps_per_expansion` adapter forwards; completion (`_denoise_to_completion`) adds more. Entropy uses additional forwards. |
+| **B — Loss** | `WeightedGRPOLoss.compute_loss` → `_log_prob_transition` | `model.train()`, autograd **on** | **One forward per tree edge** (parent → child): `adapter.forward_logits` on **entire** `parent_state` \([1, L, V]\), then `log_softmax` and gather at child tokens. |
+
+**Retained after phase A (GPU):**
+
+- Model weights (bf16 ~14GB for 7B).
+- **Every** `MCTSNode.state` and `attention_mask` (`LongTensor` on device) — size \(\mathcal{O}(\text{nodes} \times L)\); negligible vs weights.
+- **No** autograd graph from phase A.
+
+**Phase B peak (per edge, sequential if `loss_backward_per_transition=True`):**
+
+- Weights + **optimizer state** (AdamW: two moments per parameter; often the dominant term if stored in fp32).
+- **One** full transformer forward + backward with **gradient checkpointing** (Dream sets `use_cache=False` when checkpointing is on).
+- Final **logits** buffer \([L, V]\) and backward through projection — scales with \(L \times V\).
+
+So: **per-transition backward removes stitching *multiple edges* into one autograd graph**, but **does not reduce the peak of a *single* edge’s backward** through 7B. If that single-edge peak + optimizer + weights ≈ full VRAM, you still OOM (often on the last ~100–200MB allocation — fragmentation + peak).
+
+### D.2 Scaling (order of magnitude)
+
+Let \(T\) = number of tree transitions (edges) = `n_transitions` in metrics (same as edges in the built tree).
+
+- **Wall time** for loss: \(\mathcal{O}(T)\) sequential forwards + backwards.
+- **Peak VRAM** (with `loss_backward_per_transition=True`): \(\mathcal{O}(1)\) in \(T\) — dominated by **one** full backward, not \(T\) times the peak (graphs are freed between edges).
+- **Sequence length** \(L\): linear in activations through layers; **vocab** \(V\): logits row is \(\mathcal{O}(L \times V)\).
+
+Concrete sanity check (not exact): \(L=512\), \(V \approx 1.5\times10^5\) → logits alone in fp16 \(\approx 512 \times 152064 \times 2 \,\mathrm{B} \approx 150\,\mathrm{MB}\) per tensor life; full layer stack is much larger.
+
+### D.3 Why this is a “deeper” optimization problem
+
+1. **Loss requires \(p(\text{child}\mid\text{parent})\)** under the **current** policy. That is computed by a **full forward** on the parent diffusion state. There is no implemented shortcut that only runs a subset of layers without Dream API support.
+2. **Caching KV from tree build** for loss is **not** automatically valid for training: build runs under `no_grad`; recomputing with grad is required for policy-gradient correctness unless you adopt an explicit off-policy / replay objective (research).
+3. **Sparsifying `log_softmax` over \(V\)** (e.g. only at masked indices) still needs hidden states at those positions from the stack — memory win is possible with custom kernels / model hooks, not yet in this repo.
+
+### D.4 Mitigation tiers (recommended order)
+
+**Tier 0 — Measure (verifiable)**
+
+1. Run `single_step_dream.py` with `--profile-memory` and note `peak CUDA allocated` and metric `n_transitions`.
+2. Set env `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` and retry (reduces fragmentation OOMs that look like “need 130MB”).
+3. Confirm failure phase: tree-only script (`validate_dream_tree.py`) succeeding while `single_step_dream.py` fails implies bottleneck is **phase B + optimizer**, not tree sampling.
+
+**Tier 1 — Knobs (no new algorithms)**
+
+- Reduce `--max-new-tokens` (linear effect on \(L\)).
+- Reduce `--max-tree-nodes` / `--steps-per-expansion` (fewer phase-A forwards; **\(T\)** may still be \(\sim\) edges in final tree).
+- `MCTSConfig.cuda_empty_cache_after_tree=True` (default): `torch.cuda.empty_cache()` after advantages, before loss (helps allocator fragmentation, not mathematical peak).
+
+**Tier 2 — Optimizer / training mode**
+
+- **`--optimizer sgd`** in `single_step_dream.py`: removes Adam’s two moment tensors — useful **only** for smoke tests (different dynamics than production AdamW).
+- **8-bit / paged optimizers** (e.g. `bitsandbytes`): lower optimizer footprint.
+- **LoRA / adapters**: train \(\ll\) full parameter count; optimizer scales with trainable params.
+- **Multi-GPU**: FSDP / DeepSpeed ZeRO for sharded optimizer states.
+
+**Tier 3 — Algorithm / implementation (future work)**
+
+- **CPU-side tree states**: store `MCTSNode.state` on CPU; move one edge at a time to GPU in `_log_prob_transition` — saves little VRAM (states are small) but can help fragmentation and keeps GPU reserved blocks smaller between phases.
+- **Micro-batch edges**: if multiple edges shared a subgraph (they do not today), batching could amortize kernel launch; current parent states differ → still one forward per edge.
+- **Approximate objectives** that only need logits on a **window** around masks (would need theory + Dream changes).
+
+### D.5 Verifiable checklist (copy-paste)
+
+```bash
+# V1 — Peak memory + transition count (metrics line includes n_transitions)
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+  python dream/scripts/single_step_dream.py --profile-memory \
+  --max-tree-nodes 5 --max-new-tokens 128 --steps-per-expansion 16
+
+# V2 — Smoke test with lower optimizer memory (SGD)
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+  python dream/scripts/single_step_dream.py --optimizer sgd \
+  --max-tree-nodes 5 --max-new-tokens 96 --steps-per-expansion 12
+```
+
+**Success criteria for V2 (interactive 32GB):** one step completes without `CUDA out of memory` (exact tokens/nodes depend on cluster). If SGD passes but AdamW fails, prioritize **optimizer sharding / 8-bit Adam / LoRA** before rewriting the tree.
+
+---
+
+## Appendix E: Risk Register
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
 | OOM during tree building | Medium | High | Gradient checkpointing; reduce `max_tree_nodes` to 10; reduce `max_new_tokens` to 128 |
+| OOM during loss / backward (32GB, 7B full fine-tune) | High | High | **Appendix D**; `expandable_segments`; `--optimizer sgd` smoke test; 8-bit Adam / LoRA / more VRAM |
 | Right-shift logits applied incorrectly | Medium | High | Phase 8: compare adapter entropy to Dream's internal `alg="entropy"` ordering |
 | `transformers==4.46.2` version conflict | High | Medium | Separate conda/venv for Dream |
 | Branch threshold poorly calibrated | Medium | Medium | Phase 8 entropy profiling; start conservative |
@@ -1521,7 +1610,7 @@ A good starting point is `branch_threshold` = median of the empirical `H/log(V)`
 
 ---
 
-## Appendix E: Quick Reference — What Goes Where
+## Appendix F: Quick Reference — What Goes Where
 
 | Conceptual piece | File | Key function/class |
 |---|---|---|

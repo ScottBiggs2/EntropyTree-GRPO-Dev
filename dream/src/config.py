@@ -72,6 +72,9 @@ class MCTSConfig:
     # If True, call backward() once per tree transition instead of on mean(loss).
     # Same gradients, much lower peak VRAM (important for 7B on ~24–32GB GPUs).
     loss_backward_per_transition: bool = True
+    # After tree build (no_grad), release cached blocks to reduce fragmentation
+    # before the first training forward (see DEVELOPMENT_PLAN Appendix D).
+    cuda_empty_cache_after_tree: bool = True
 
     # --- Experiment metadata ---
     num_epochs: int = 2

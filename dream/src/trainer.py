@@ -108,6 +108,12 @@ class EntropyMCTSTrainer:
             advantage_clip=getattr(self.config, "advantage_clip", 2.0),
         )
 
+        if getattr(self.config, "cuda_empty_cache_after_tree", True):
+            if torch.cuda.is_available() and str(self.config.device).startswith(
+                "cuda"
+            ):
+                torch.cuda.empty_cache()
+
         self.model.train()
         per_trans = getattr(self.config, "loss_backward_per_transition", True)
         self.optimizer.zero_grad()

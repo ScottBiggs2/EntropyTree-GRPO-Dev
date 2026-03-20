@@ -83,6 +83,18 @@ def main():
         default=16,
         help="Denoising steps per tree expansion",
     )
+    p.add_argument(
+        "--optimizer",
+        type=str,
+        choices=("adamw", "sgd"),
+        default="adamw",
+        help="adamw (default) or sgd — SGD drops Adam state (~2× optimizer VRAM) for smoke tests",
+    )
+    p.add_argument(
+        "--profile-memory",
+        action="store_true",
+        help="Print torch.cuda.max_memory_allocated() after the step (GB)",
+    )
     args = p.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -105,13 +117,21 @@ def main():
         model.gradient_checkpointing_enable()
     model.train()
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate)
+    if args.optimizer == "sgd":
+        optimizer = torch.optim.SGD(model.parameters(), lr=cfg.learning_rate)
+    else:
+        optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate)
     reward_fn = SyntaxReward()
     trainer = EntropyMCTSTrainer(model, tokenizer, cfg, reward_fn, optimizer)
 
     print("Running one train_step...")
+    if args.profile_memory and device == "cuda":
+        torch.cuda.reset_peak_memory_stats()
     metrics = trainer.train_step(args.prompt)
     print("Metrics:", metrics)
+    if args.profile_memory and device == "cuda":
+        peak = torch.cuda.max_memory_allocated() / 1e9
+        print(f"[memory] peak CUDA allocated (GB, approximate): {peak:.2f}")
     return 0
 
 
