@@ -137,6 +137,8 @@ On a cloud machine with sufficient GPU memory (e.g. A100 40GB+):
 
    Optional: `--max-tree-nodes 5 --max-new-tokens 128 --steps-per-expansion 16` to reduce VRAM. Uses `SyntaxReward` by default; for execution-based reward see Step 4 below.
 
+   **Why tree validation can work but `single_step_dream.py` OOMs**: inference-only tree building stays in `eval()` and does not keep a giant autograd graph. A training step adds **AdamW states**, **gradient checkpointing recomputation**, and (historically) one backward over **all tree transitions at once** — that peak is tight on ~32GB. The trainer now defaults to **`MCTSConfig.loss_backward_per_transition=True`**, which backprops each edge separately (same gradients, much lower peak VRAM). If you still hit the limit: shrink `--max-new-tokens` / tree size, set `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`, or use LoRA / 8-bit optimizers — the GPU is not necessarily “too old,” the step is just memory-heavy for full 7B fine-tuning.
+
 4. **Use Dream in your own training loop**: load with `dream.src.utils.load_model_and_tokenizer`
    and `MCTSConfig(model_type="dream", model_name_or_path="Dream-org/Dream-v0-Instruct-7B")`.
 

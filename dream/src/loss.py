@@ -1,6 +1,6 @@
 """Weighted GRPO loss with corrected time/entropy weighting for Dream stack."""
 
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -36,25 +36,82 @@ class WeightedGRPOLoss:
         leaves: List[MCTSNode],
         prompt: str,
         vocab_size: int,
+        backward_per_transition: Optional[bool] = None,
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
-        """Returns (loss, metrics_dict)."""
+        """Returns (loss, metrics_dict).
+
+        When ``backward_per_transition`` is True (default from config), this
+        runs ``(contrib/n).backward()`` inside the transition loop so autograd
+        never stitches every edge's forward into one mega-graph — same
+        gradients as ``mean(loss)``, much lower peak VRAM on 7B.
+        """
         transitions = self._collect_transitions(root, vocab_size)
         if not transitions:
             dev = next(model.parameters()).device
             return torch.tensor(0.0, device=dev), {"n_transitions": 0}
 
-        total_loss = torch.tensor(
-            0.0, device=next(model.parameters()).device, dtype=torch.float32
-        )
-        n = len(transitions)
+        if backward_per_transition is None:
+            backward_per_transition = getattr(
+                self.config, "loss_backward_per_transition", True
+            )
 
-        # Debug aggregates.
+        n = len(transitions)
+        device = next(model.parameters()).device
+
+        # Debug aggregates (identical in both paths).
         sum_abs_adv = 0.0
         sum_w_time = 0.0
         sum_w_ent = 0.0
         sum_weight = 0.0
         sum_weighted_term = 0.0
 
+        if backward_per_transition:
+            total_logged = torch.tensor(0.0, device=device, dtype=torch.float32)
+            for trans in transitions:
+                raw_log_prob = self._log_prob_transition(
+                    self.adapter,
+                    trans.parent_state,
+                    trans.child_state,
+                    trans.parent_attention_mask,
+                )
+                changed = (
+                    (trans.parent_state != trans.child_state)
+                    & (trans.parent_state == self.mask_id)
+                )
+                n_tok = max(int(changed.sum().item()), 1)
+                log_prob = raw_log_prob / n_tok
+
+                w_time = trans.time_weight
+                w_ent = trans.entropy_weight
+                w = self.config.alpha_time * w_time + self.config.alpha_entropy * w_ent
+                contrib = -w * float(trans.advantage) * log_prob
+                loss_i = contrib / n
+                if loss_i.requires_grad:
+                    loss_i.backward()
+
+                total_logged = total_logged + loss_i.detach()
+
+                lp_val = float(log_prob.detach().item())
+                adv_val = float(trans.advantage)
+                sum_abs_adv += abs(adv_val)
+                sum_w_time += float(w_time)
+                sum_w_ent += float(w_ent)
+                sum_weight += float(w)
+                sum_weighted_term += float(-w * adv_val * lp_val)
+
+            metrics = {
+                "loss": float(total_logged.item()),
+                "n_transitions": n,
+                "mean_abs_adv": sum_abs_adv / n,
+                "mean_w_time": sum_w_time / n,
+                "mean_w_ent": sum_w_ent / n,
+                "mean_weight": sum_weight / n,
+                "mean_weighted_adv_logp": sum_weighted_term / n,
+            }
+            # Already backpropped; return detached scalar for callers that log it.
+            return total_logged.detach(), metrics
+
+        total_loss = torch.tensor(0.0, device=device, dtype=torch.float32)
         for trans in transitions:
             raw_log_prob = self._log_prob_transition(
                 self.adapter,

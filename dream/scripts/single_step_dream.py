@@ -8,7 +8,9 @@ Uses SyntaxReward for quick iteration; switch to ExecutionLiteReward for real co
 Usage (from repo root):
   python dream/scripts/single_step_dream.py [--prompt "your prompt"]
 
-Requires GPU with enough VRAM (~24GB+ with gradient checkpointing and small tree).
+Requires enough VRAM for 7B + AdamW + backward (often ~32GB interactive;
+tune --max-new-tokens / --max-tree-nodes). Trainer uses per-transition backward
+by default to reduce peak memory (see MCTSConfig.loss_backward_per_transition).
 """
 import argparse
 import sys

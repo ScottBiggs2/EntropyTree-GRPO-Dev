@@ -109,11 +109,18 @@ class EntropyMCTSTrainer:
         )
 
         self.model.train()
-        loss, loss_metrics = self.loss_computer.compute_loss(
-            self.model, root, leaves, prompt, self.vocab_size
-        )
+        per_trans = getattr(self.config, "loss_backward_per_transition", True)
         self.optimizer.zero_grad()
-        loss.backward()
+        loss, loss_metrics = self.loss_computer.compute_loss(
+            self.model,
+            root,
+            leaves,
+            prompt,
+            self.vocab_size,
+            backward_per_transition=per_trans,
+        )
+        if not per_trans:
+            loss.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
         self.optimizer.step()
         if self.scheduler is not None:

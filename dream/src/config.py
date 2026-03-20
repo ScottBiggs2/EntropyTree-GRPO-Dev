@@ -69,6 +69,9 @@ class MCTSConfig:
     warmup_ratio: float = 0.1
     min_lr_ratio: float = 0.05
     gradient_checkpointing: bool = True
+    # If True, call backward() once per tree transition instead of on mean(loss).
+    # Same gradients, much lower peak VRAM (important for 7B on ~24–32GB GPUs).
+    loss_backward_per_transition: bool = True
 
     # --- Experiment metadata ---
     num_epochs: int = 2
