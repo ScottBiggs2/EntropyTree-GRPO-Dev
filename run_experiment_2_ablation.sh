@@ -1,6 +1,7 @@
 #!/bin/bash
 # Ablation: expansion steps, branch_width, max_tree_nodes. WandB only; no checkpoint/log storage.
 # Run from project dir: sbatch run_experiment_2_ablation.sh
+# Ensure logs/ exists before sbatch (Slurm opens logs/… before the script body runs).
 #SBATCH --job-name=grpo_ablation
 #SBATCH --output=logs/ablation_%j.out
 #SBATCH --error=logs/ablation_%j.err

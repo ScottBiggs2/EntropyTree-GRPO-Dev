@@ -1,11 +1,11 @@
 #!/bin/bash
-# Dream 7B: light WandB comparison (initial eval, fixed-step baseline train, adaptive default, adaptive alt HP).
-# Mirrors run_experiment_2.sh style. Uses entropy-MCTS-GRPO + SyntaxReward under dream/.
+# Dream 7B: light WandB comparison (initial eval, fixed-step train, adaptive default, adaptive alt HP).
+# Same Slurm / conda / pip pattern as run_experiment_2.sh — submit from repo root.
 #
-# Submit from repo root:
+# Prereq: directory logs/ must exist so Slurm can open logs/dream_comparison_%j.out
+# (repo ships logs/.gitkeep; if you removed it: mkdir -p logs)
+#
 #   sbatch run_dream_comparison.sh
-# Or interactive:
-#   bash run_dream_comparison.sh
 #
 #SBATCH --job-name=dream_cmp
 #SBATCH --output=logs/dream_comparison_%j.out
@@ -13,32 +13,29 @@
 #SBATCH --partition=gpu
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:a100:1
 #SBATCH --mem=64G
 #SBATCH --time=04:00:00
 
-set -euo pipefail
+# Job runs in the directory you submitted from (SLURM_SUBMIT_DIR)
 cd "${SLURM_SUBMIT_DIR:-.}"
 mkdir -p logs checkpoints
 
 echo "Job started at: $(date)"
-echo "Node: $(hostname)  Job ID: ${SLURM_JOB_ID:-local}"
+echo "Running on node: $(hostname)"
+echo "Job ID: $SLURM_JOB_ID"
+echo "GPU: $CUDA_VISIBLE_DEVICES"
 echo "Working dir: $(pwd)"
 
-# Conda (match your Dream env name)
+# Conda in batch: source conda.sh so activate works (same as run_experiment_2.sh)
 if [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
   source "$HOME/miniconda3/etc/profile.d/conda.sh"
 elif [ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]; then
   source "$HOME/anaconda3/etc/profile.d/conda.sh"
 fi
-if [ -f "/scratch/${USER}/conda_envs/EntropyTreeGRPO_Dream_env/bin/activate" ]; then
-  # shellcheck source=/dev/null
-  source "/scratch/${USER}/conda_envs/EntropyTreeGRPO_Dream_env/bin/activate"
-elif conda env list | grep -q EntropyTreeGRPO_Dream_env; then
-  conda activate EntropyTreeGRPO_Dream_env
-else
-  echo "WARN: activate EntropyTreeGRPO_Dream_env (or edit this script)" >&2
-fi
+# Dream stack env (parallel to EntropyTreeGRPO_env in run_experiment_2.sh).
+# Prefix-only env: conda activate "/scratch/${USER}/conda_envs/EntropyTreeGRPO_Dream_env"
+conda activate EntropyTreeGRPO_Dream_env
 
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
@@ -46,8 +43,10 @@ echo "================================"
 echo "Installing dream/requirements.txt"
 echo "================================"
 pip install -r dream/requirements.txt -q
+if [ $? -ne 0 ]; then echo "ERROR: pip install failed"; exit 1; fi
 
 echo "Python: $(python --version)"
+echo "PyTorch: $(python -c 'import torch; print(torch.__version__)')"
 echo "CUDA: $(python -c 'import torch; print(torch.cuda.is_available())')"
 
 JOB_ID="${SLURM_JOB_ID:-local}"
@@ -55,7 +54,7 @@ RUN_NAME="dream_cmp_${JOB_ID}"
 GROUP="$RUN_NAME"
 WANDB_PROJECT="${WANDB_PROJECT:-entropy-tree-grpo-dream}"
 
-# Light budget (increase for real experiments)
+# Light budget (export NUM_EPOCHS=... etc. before sbatch to override)
 NUM_EPOCHS="${NUM_EPOCHS:-3}"
 MAX_TREE_NODES="${MAX_TREE_NODES:-8}"
 BRANCH_WIDTH="${BRANCH_WIDTH:-2}"
@@ -107,7 +106,7 @@ echo "================================"
 python dream/scripts/run_dream_comparison.py --phase adaptive_alt_hp "${COMMON[@]}"
 
 echo "================================"
-echo "Done at: $(date)"
+echo "Job finished at: $(date)"
 echo "WandB group: $GROUP  project: $WANDB_PROJECT"
-echo "Checkpoints under checkpoints/dream_comparison/$RUN_NAME (if save_every > 0)"
+echo "Checkpoints: $(pwd)/checkpoints/dream_comparison/$RUN_NAME"
 echo "================================"

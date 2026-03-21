@@ -1,6 +1,7 @@
 #!/bin/bash
 # Phase 8.5: Run baseline and entropy-MCTS with execution-lite reward. WandB enabled.
 # Run from project dir: sbatch run_experiment_2.sh
+# Slurm opens logs/… before the script runs — ensure logs/ exists (e.g. mkdir -p logs or logs/.gitkeep in repo).
 #SBATCH --job-name=entropy_grpo_8.5
 #SBATCH --output=logs/run_experiment_2_%j.out
 #SBATCH --error=logs/run_experiment_2_%j.err
