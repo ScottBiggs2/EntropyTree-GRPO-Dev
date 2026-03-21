@@ -1,6 +1,7 @@
 """Shared utilities for Dream substack: device, model loading, sampling."""
 
 from typing import Any, Tuple, Optional
+import importlib
 import math
 import os
 
@@ -15,16 +16,15 @@ def apply_lora_to_dream_model(model: torch.nn.Module, config: MCTSConfig) -> tor
     # `isinstance(module.weight, torch.distributed.tensor.DTensor)` but the module
     # may not be imported yet. Pre-import BEFORE PEFT imports to avoid AttributeError.
     # See: https://github.com/huggingface/peft/issues/2344
+    # Do not use `import torch.distributed.tensor` inside this function: Python
+    # treats `torch` as a local name and raises UnboundLocalError on the
+    # hasattr line above. Use importlib instead.
     if not hasattr(torch.distributed, "tensor"):
         try:
-            # PyTorch 2.5+: DTensor moved to torch.distributed.tensor (public API)
-            # This import may fail if distributed support isn't compiled in.
-            import torch.distributed.tensor  # noqa: F401
+            importlib.import_module("torch.distributed.tensor")
         except (ImportError, AttributeError, ModuleNotFoundError):
             try:
-                # Fallback: PyTorch < 2.5 used private _tensor module
-                import torch.distributed._tensor as _dt_legacy  # noqa: F401
-                # Monkey-patch for PEFT compatibility (PEFT expects .tensor path)
+                _dt_legacy = importlib.import_module("torch.distributed._tensor")
                 torch.distributed.tensor = _dt_legacy
             except (ImportError, AttributeError, ModuleNotFoundError):
                 # DTensor not available (non-distributed build or import failed).
