@@ -8,6 +8,9 @@ Phases (run separately or via run_dream_comparison.sh):
   adaptive_default — adaptive stepping + default branch_threshold / alpha_entropy
   adaptive_alt_hp  — adaptive + alternate HP (e.g. higher alpha_entropy) to sanity-check logging
 
+WandB: by default logs flat keys (loss, avg_reward, wall_sec_step, …) like scripts/run_experiment_2.py
+so runs in the same --wandb_group overlay on shared charts. Use --wandb_prefixed_keys for phase/* charts.
+
 Usage (repo root):
   python dream/scripts/run_dream_comparison.py --phase initial_eval --wandb_project entropy-tree-grpo-dream
   python dream/scripts/run_dream_comparison.py --phase baseline_train --num_epochs 3 --run_name my_run
@@ -61,6 +64,12 @@ DEFAULT_PROMPTS = [
     "Write a Python function that returns the factorial of n.",
     "Write a Python function to merge two sorted lists.",
     "Write a Python function that checks if a string is a palindrome.",
+    "Write a Python function to compute the greatest common divisor of two integers.",
+    "Write a Python function to reverse a linked list (describe the Node class briefly).",
+    "Write a Python function to find the longest common prefix among a list of strings.",
+    "Write a Python function to validate balanced parentheses in a string.",
+    "Write a Python function to binary search a sorted list for a target value.",
+    "Write a Python function to count inversions in a list using merge sort.",
 ]
 
 
@@ -69,6 +78,14 @@ def load_prompts(path: str | None) -> List[str]:
         with open(path) as f:
             return [ln.strip() for ln in f if ln.strip()]
     return DEFAULT_PROMPTS
+
+
+PHASE_ORDER = (
+    "initial_eval",
+    "baseline_train",
+    "adaptive_default",
+    "adaptive_alt_hp",
+)
 
 
 def config_to_jsonable(cfg: MCTSConfig) -> Dict[str, Any]:
@@ -117,6 +134,11 @@ def main() -> int:
     p.add_argument("--learning_rate", type=float, default=5e-6)
     p.add_argument("--checkpoint_dir", type=str, default="checkpoints")
     p.add_argument("--save_every_steps", type=int, default=0, help="0 = no checkpoints")
+    p.add_argument(
+        "--wandb_prefixed_keys",
+        action="store_true",
+        help="Log metrics as phase/key (separate charts per arm). Default: flat keys like run_experiment_2.py for easy multi-run compare.",
+    )
     args = p.parse_args()
 
     prompts = load_prompts(args.prompts_file or None)
@@ -126,6 +148,7 @@ def main() -> int:
     alpha_entropy = 0.5
     branch_threshold = args.branch_threshold
     phase_tag = args.phase
+    phase_idx = float(PHASE_ORDER.index(args.phase))
 
     if args.phase == "initial_eval":
         adaptive = True
@@ -196,11 +219,31 @@ def main() -> int:
             name=f"{args.run_name}_{args.phase}",
             group=group,
             tags=[args.phase, "dream", "lora" if args.lora else "full_ft"],
-            config={**config_to_jsonable(cfg), "phase": args.phase},
+            config={
+                **config_to_jsonable(cfg),
+                "phase": args.phase,
+                "phase_idx": phase_idx,
+                "wandb_flat_keys": not args.wandb_prefixed_keys,
+            },
         )
 
     global_step = 0
     t_run0 = time.perf_counter()
+
+    def _log_wandb_step(metrics: Dict[str, Any], extra: Dict[str, float]) -> None:
+        """Same metric names across arms (like scripts/run_experiment_2.py) unless --wandb_prefixed_keys."""
+        if not use_wandb:
+            return
+        import wandb
+
+        row: Dict[str, float] = {}
+        for k, v in metrics.items():
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                row[k] = float(v)
+        row.update(extra)
+        if args.wandb_prefixed_keys:
+            row = {f"{phase_tag}/{k}": v for k, v in row.items()}
+        wandb.log(row, step=global_step)
 
     for epoch in range(max(1, epochs) if train else 1):
         if not train and epoch > 0:
@@ -209,28 +252,37 @@ def main() -> int:
         epoch_means: Dict[str, float] = {}
         n_prompts = 0
         for pi, prompt in enumerate(prompts):
+            t_step0 = time.perf_counter()
             if train:
                 metrics = trainer.train_step(prompt)
             else:
                 metrics = trainer.eval_step(prompt)
             metrics["epoch"] = float(epoch)
             metrics["prompt_idx"] = float(pi)
+            step_wall = time.perf_counter() - t_step0
             n_prompts += 1
             for k, v in metrics.items():
-                if isinstance(v, (int, float)) and k not in ("epoch", "prompt_idx", "lr"):
+                if isinstance(v, (int, float)) and k not in (
+                    "epoch",
+                    "prompt_idx",
+                ):
                     epoch_means[k] = epoch_means.get(k, 0.0) + float(v)
-            if use_wandb:
-                import wandb
-
-                wandb.log(
-                    {f"{phase_tag}/{k}": float(v) for k, v in metrics.items()},
-                    step=global_step,
-                )
-            global_step += 1
-            print(
-                f"[dream_cmp] epoch={epoch} step={global_step} "
-                + " ".join(f"{k}={metrics[k]:.4f}" for k in ("loss", "avg_reward") if k in metrics)
+            _log_wandb_step(
+                metrics,
+                {
+                    "wall_sec_step": float(step_wall),
+                    "phase_idx": phase_idx,
+                    "training_step": 1.0 if train else 0.0,
+                },
             )
+            global_step += 1
+            numeric_keys = sorted(
+                k
+                for k, v in metrics.items()
+                if isinstance(v, (int, float)) and not isinstance(v, bool)
+            )
+            detail = " ".join(f"{k}={float(metrics[k]):.4f}" for k in numeric_keys)
+            print(f"[dream_cmp] epoch={epoch} step={global_step} {detail} wall_sec={step_wall:.2f}")
 
             if train and args.save_every_steps > 0 and global_step % args.save_every_steps == 0:
                 save_dir = Path(cfg.checkpoint_dir) / "dream_comparison" / args.run_name
@@ -250,10 +302,21 @@ def main() -> int:
         for k in list(epoch_means.keys()):
             epoch_means[k] /= max(n_prompts, 1)
         epoch_means["wall_sec_epoch"] = time.perf_counter() - t_ep
+        # One summary row per epoch (flat names so all arms share charts).
+        epoch_row = {f"epoch_mean_{k}": float(v) for k, v in epoch_means.items()}
+        epoch_row["epoch"] = float(epoch)
+        epoch_row["phase_idx"] = phase_idx
+        epoch_row["training_step"] = 1.0 if train else 0.0
         if use_wandb:
             import wandb
 
-            wandb.log({f"{phase_tag}/epoch_mean/{k}": v for k, v in epoch_means.items()}, step=global_step - 1)
+            if args.wandb_prefixed_keys:
+                wandb.log(
+                    {f"{phase_tag}/{k}": v for k, v in epoch_row.items()},
+                    step=max(global_step - 1, 0),
+                )
+            else:
+                wandb.log(epoch_row, step=max(global_step - 1, 0))
 
         print(f"[dream_cmp] epoch {epoch} mean metrics: {epoch_means}")
 
@@ -277,13 +340,19 @@ def main() -> int:
     if use_wandb:
         import wandb
 
-        wandb.log(
-            {
-                f"{phase_tag}/total_wall_sec": time.perf_counter() - t_run0,
-                "global_step": global_step,
-            },
-            step=global_step - 1 if global_step else 0,
-        )
+        final_step = global_step - 1 if global_step else 0
+        summary = {
+            "total_wall_sec": time.perf_counter() - t_run0,
+            "total_steps": float(global_step),
+            "phase_idx": phase_idx,
+        }
+        if args.wandb_prefixed_keys:
+            wandb.log(
+                {f"{phase_tag}/{k}": v for k, v in summary.items()},
+                step=final_step,
+            )
+        else:
+            wandb.log(summary, step=final_step)
         wandb.finish()
 
     return 0
