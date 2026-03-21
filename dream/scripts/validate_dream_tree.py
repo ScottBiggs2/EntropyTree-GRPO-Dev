@@ -158,10 +158,41 @@ def main():
         )
     if edge_steps:
         uniq = sorted(set(edge_steps))
-        print(
-            f"steps_in_edge (child links): n={len(edge_steps)}, "
-            f"unique={uniq}, sample={edge_steps[:12]}"
-        )
+        expansion_edges = [s for s in edge_steps if s > 0]  # exclude 0 (completion or early exit)
+        if args.adaptive_stepping:
+            expected_range = f"[{cfg.min_steps_per_expansion}, {cfg.max_steps_per_expansion}]"
+            in_range = [s for s in expansion_edges if cfg.min_steps_per_expansion <= s <= cfg.max_steps_per_expansion]
+            print(
+                f"steps_in_edge (all child links): n={len(edge_steps)}, "
+                f"unique={uniq}, sample={edge_steps[:12]}"
+            )
+            if expansion_edges:
+                print(
+                    f"  expansion edges (excl. 0): {len(expansion_edges)} edges, "
+                    f"range {min(expansion_edges)}-{max(expansion_edges)}, "
+                    f"expected {expected_range}"
+                )
+                if len(uniq) > 1:
+                    print(
+                        f"  ✓ Adaptive variation detected: {len(uniq)} distinct step counts "
+                        f"(fixed mode would show 1 unique value = steps_per_expansion)"
+                    )
+                else:
+                    print(
+                        f"  ⚠ All expansion edges have same step count — threshold may not be firing "
+                        f"(try lower --branch-threshold or check entropy profile)"
+                    )
+        else:
+            expected = cfg.steps_per_expansion
+            if len(uniq) == 1 and uniq[0] == expected:
+                print(
+                    f"steps_in_edge: all {len(edge_steps)} edges = {expected} (fixed stepping ✓)"
+                )
+            else:
+                print(
+                    f"steps_in_edge: n={len(edge_steps)}, unique={uniq} "
+                    f"(expected all={expected} for fixed; 0s are completion edges or early exits)"
+                )
     elif args.adaptive_stepping:
         print("NOTE: no steps_in_edge recorded (unexpected for adaptive expansions).")
 

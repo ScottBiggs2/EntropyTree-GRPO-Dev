@@ -11,6 +11,36 @@ from dream.src.config import MCTSConfig
 
 def apply_lora_to_dream_model(model: torch.nn.Module, config: MCTSConfig) -> torch.nn.Module:
     """Wrap Dream with PEFT LoRA on attention + MLP linears (Llama-style names)."""
+    # PyTorch 2.5 compatibility: PEFT's tuners_utils.py checks
+    # `isinstance(module.weight, torch.distributed.tensor.DTensor)` but the module
+    # may not be imported yet. Pre-import BEFORE PEFT imports to avoid AttributeError.
+    # See: https://github.com/huggingface/peft/issues/2344
+    if not hasattr(torch.distributed, "tensor"):
+        try:
+            # PyTorch 2.5+: DTensor moved to torch.distributed.tensor (public API)
+            # This import may fail if distributed support isn't compiled in.
+            import torch.distributed.tensor  # noqa: F401
+        except (ImportError, AttributeError, ModuleNotFoundError):
+            try:
+                # Fallback: PyTorch < 2.5 used private _tensor module
+                import torch.distributed._tensor as _dt_legacy  # noqa: F401
+                # Monkey-patch for PEFT compatibility (PEFT expects .tensor path)
+                torch.distributed.tensor = _dt_legacy
+            except (ImportError, AttributeError, ModuleNotFoundError):
+                # DTensor not available (non-distributed build or import failed).
+                # PEFT's isinstance check will fail gracefully if DTensor is None,
+                # but we need the module attribute to exist to avoid AttributeError.
+                import types
+
+                class _DummyDTensor:
+                    """Placeholder so isinstance(..., DTensor) checks don't crash."""
+
+                    pass
+
+                _dummy_mod = types.ModuleType("tensor")
+                _dummy_mod.DTensor = _DummyDTensor
+                torch.distributed.tensor = _dummy_mod
+
     try:
         from peft import LoraConfig, get_peft_model  # type: ignore
     except ImportError as e:

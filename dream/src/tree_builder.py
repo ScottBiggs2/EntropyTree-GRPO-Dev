@@ -357,7 +357,7 @@ class EntropyGuidedTreeBuilder:
                 state[sel] = x0_pred[sel]
                 steps_taken += 1
 
-        return MCTSNode(
+        child = MCTSNode(
             state=state,
             attention_mask=attn,
             prompt_len=prompt_len,
@@ -365,4 +365,6 @@ class EntropyGuidedTreeBuilder:
             parent=node,
             mask_id=self.mask_id,
         )
+        child.steps_in_edge = steps_taken
+        return child
 
