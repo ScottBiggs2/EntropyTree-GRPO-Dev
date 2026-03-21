@@ -19,7 +19,9 @@ echo "Job started at: $(date)"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Working dir: $(pwd)"
 
-if [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
+if [ -f "$HOME/miniconda/etc/profile.d/conda.sh" ]; then
+  source "$HOME/miniconda/etc/profile.d/conda.sh"
+elif [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
   source "$HOME/miniconda3/etc/profile.d/conda.sh"
 elif [ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]; then
   source "$HOME/anaconda3/etc/profile.d/conda.sh"

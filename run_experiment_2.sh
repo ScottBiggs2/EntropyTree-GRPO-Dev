@@ -23,7 +23,10 @@ echo "GPU: $CUDA_VISIBLE_DEVICES"
 echo "Working dir: $(pwd)"
 
 # Conda in batch: source conda.sh so activate works
-if [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
+# Check miniconda before miniconda3 (conda info --base is often ~/miniconda).
+if [ -f "$HOME/miniconda/etc/profile.d/conda.sh" ]; then
+  source "$HOME/miniconda/etc/profile.d/conda.sh"
+elif [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
   source "$HOME/miniconda3/etc/profile.d/conda.sh"
 elif [ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]; then
   source "$HOME/anaconda3/etc/profile.d/conda.sh"

@@ -2,14 +2,16 @@
 # Dream 7B: light WandB comparison (initial eval, fixed-step train, adaptive default, adaptive alt HP).
 # Same Slurm / conda / pip pattern as run_experiment_2.sh — submit from repo root.
 #
-# Prereq: directory logs/ must exist so Slurm can open logs/dream_comparison_%j.out
-# (repo ships logs/.gitkeep; if you removed it: mkdir -p logs)
+# Slurm opens stdout/stderr BEFORE this script runs. Do NOT use logs/... unless that
+# directory already exists — missing logs/ → instant job failure and no .out file.
+# These paths are relative to the directory you run sbatch from (repo root):
 #
 #   sbatch run_dream_comparison.sh
+#   ls dream_comparison_<jobid>.out
 #
 #SBATCH --job-name=dream_cmp
-#SBATCH --output=logs/dream_comparison_%j.out
-#SBATCH --error=logs/dream_comparison_%j.err
+#SBATCH --output=dream_comparison_%j.out
+#SBATCH --error=dream_comparison_%j.err
 #SBATCH --partition=gpu
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -27,44 +29,20 @@ echo "Job ID: $SLURM_JOB_ID"
 echo "GPU: $CUDA_VISIBLE_DEVICES"
 echo "Working dir: $(pwd)"
 
-# Conda in batch: source conda.sh so activate works (same as run_experiment_2.sh).
-# Dream env name is **EntropyTreeGRPO_Dream_env** (Python 3.10) — see dream/README.md.
-# If activate fails silently, you get the wrong python (e.g. base 3.13) → torch/torchvision mismatch and no WandB.
-if [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
+# Conda in batch: same as run_experiment_2.sh — source conda.sh, then conda activate.
+# `conda info --base` is often ~/miniconda (not miniconda3); check miniconda first.
+# Dream env: **EntropyTreeGRPO_Dream_env** — see dream/README.md.
+if [ -f "$HOME/miniconda/etc/profile.d/conda.sh" ]; then
+  # shellcheck source=/dev/null
+  source "$HOME/miniconda/etc/profile.d/conda.sh"
+elif [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
   # shellcheck source=/dev/null
   source "$HOME/miniconda3/etc/profile.d/conda.sh"
 elif [ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]; then
   # shellcheck source=/dev/null
   source "$HOME/anaconda3/etc/profile.d/conda.sh"
-else
-  echo "ERROR: conda.sh not found. Install Miniconda/Anaconda or edit this script." >&2
-  exit 1
 fi
-
-# 1) Same as README: named env (what you get after `conda create -n EntropyTreeGRPO_Dream_env ...`)
-if conda activate EntropyTreeGRPO_Dream_env; then
-  echo "Activated conda env: EntropyTreeGRPO_Dream_env (see dream/README.md)"
-# 2) Explicit override: export DREAM_CONDA_PREFIX=/path/to/env
-elif [ -n "${DREAM_CONDA_PREFIX:-}" ] && [ -x "${DREAM_CONDA_PREFIX}/bin/python" ]; then
-  echo "Activating DREAM_CONDA_PREFIX: $DREAM_CONDA_PREFIX"
-  conda activate "$DREAM_CONDA_PREFIX" || {
-    echo "ERROR: conda activate $DREAM_CONDA_PREFIX failed" >&2
-    exit 1
-  }
-# 3) README "Scratch" clone: conda activate /scratch/.../EntropyTreeGRPO_Dream_env
-elif [ -x "/scratch/${USER}/conda_envs/EntropyTreeGRPO_Dream_env/bin/python" ]; then
-  DREAM_SCRATCH="/scratch/${USER}/conda_envs/EntropyTreeGRPO_Dream_env"
-  echo "Activating scratch clone: $DREAM_SCRATCH"
-  conda activate "$DREAM_SCRATCH" || {
-    echo "ERROR: conda activate $DREAM_SCRATCH failed" >&2
-    exit 1
-  }
-else
-  echo "ERROR: Could not activate EntropyTreeGRPO_Dream_env." >&2
-  echo "  Create it: dream/README.md (conda create -n EntropyTreeGRPO_Dream_env python=3.10)" >&2
-  echo "  Or clone to scratch, or set DREAM_CONDA_PREFIX to your env path." >&2
-  exit 1
-fi
+conda activate EntropyTreeGRPO_Dream_env
 
 echo "CONDA_PREFIX=${CONDA_PREFIX:-}"
 echo "PYTHON=$(command -v python)"
@@ -143,4 +121,9 @@ echo "================================"
 echo "Job finished at: $(date)"
 echo "WandB group: $GROUP  project: $WANDB_PROJECT"
 echo "Checkpoints: $(pwd)/checkpoints/dream_comparison/$RUN_NAME"
+echo "Slurm stdout/stderr (this job): $(pwd)/dream_comparison_${SLURM_JOB_ID:-local}.out  .err"
+if [ -n "${SLURM_JOB_ID:-}" ] && [ -f "dream_comparison_${SLURM_JOB_ID}.out" ]; then
+  cp -f "dream_comparison_${SLURM_JOB_ID}.out" "logs/dream_comparison_${SLURM_JOB_ID}.out" 2>/dev/null || true
+  cp -f "dream_comparison_${SLURM_JOB_ID}.err" "logs/dream_comparison_${SLURM_JOB_ID}.err" 2>/dev/null || true
+fi
 echo "================================"
