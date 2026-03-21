@@ -18,6 +18,7 @@ Usage (repo root):
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
 import sys
@@ -86,6 +87,14 @@ PHASE_ORDER = (
     "adaptive_default",
     "adaptive_alt_hp",
 )
+
+
+def _cuda_relax_after_train_step() -> None:
+    """Free fragmented GPU memory between prompts (Dream 7B + tree can hit ~80GB peak)."""
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
 
 
 def config_to_jsonable(cfg: MCTSConfig) -> Dict[str, Any]:
@@ -286,6 +295,9 @@ def main() -> int:
                 )
                 detail = " ".join(f"{k}={float(metrics[k]):.4f}" for k in numeric_keys)
                 print(f"[dream_cmp] epoch={epoch} step={global_step} {detail} wall_sec={step_wall:.2f}")
+
+                if train:
+                    _cuda_relax_after_train_step()
 
                 if train and args.save_every_steps > 0 and global_step % args.save_every_steps == 0:
                     save_dir = Path(cfg.checkpoint_dir) / "dream_comparison" / args.run_name

@@ -1,0 +1,65 @@
+Job started at: Sat Mar 21 02:27:08 EDT 2026
+Running on node: d1028
+Job ID: 5283043
+GPU: 0
+Working dir: /home/biggs.s/EntropyTree-GRPO-Dream
+CONDA_PREFIX=/home/biggs.s/miniconda/envs/EntropyTreeGRPO_Dream_env
+PYTHON=/home/biggs.s/miniconda/envs/EntropyTreeGRPO_Dream_env/bin/python
+executable: /home/biggs.s/miniconda/envs/EntropyTreeGRPO_Dream_env/bin/python
+version: 3.10.20
+================================
+Installing dream/requirements.txt (same interpreter as above)
+================================
+Python: Python 3.10.20
+PyTorch: 2.5.1+cu124
+Torchvision: 0.20.1+cu124
+CUDA: True
+================================
+1/4 initial_eval (no training; adaptive tree)
+================================
+[dream_cmp] phase=initial_eval train=False epochs=0 prompts=10
+[dream_cmp] adaptive_stepping=True branch_threshold=0.65 alpha_entropy=0.5
+[LoRA] trainable params: 20,185,088 / 7,635,801,600 (0.2643%)
+[dream entropy diag] depth=1 n_masked=1 min=0.000001 mean=0.000001 max=0.000001
+[dream_cmp] epoch=0 step=1 avg_entropy=0.4271 avg_reward=0.3000 epoch=0.0000 loss=0.0000 max_reward=0.3000 n_loss_forwards=0.0000 n_transitions=0.0000 prompt_idx=0.0000 tree_leaves=11.0000 tree_nodes=16.0000 wall_sec=10.11
+[dream_cmp] epoch=0 step=2 avg_entropy=0.4193 avg_reward=0.3000 epoch=0.0000 loss=0.0000 max_reward=0.3000 n_loss_forwards=0.0000 n_transitions=0.0000 prompt_idx=1.0000 tree_leaves=11.0000 tree_nodes=16.0000 wall_sec=8.47
+[dream_cmp] epoch=0 step=3 avg_entropy=0.4375 avg_reward=0.0000 epoch=0.0000 loss=0.0000 max_reward=0.0000 n_loss_forwards=0.0000 n_transitions=0.0000 prompt_idx=2.0000 tree_leaves=11.0000 tree_nodes=16.0000 wall_sec=8.47
+[dream_cmp] epoch=0 step=4 avg_entropy=0.4766 avg_reward=0.3000 epoch=0.0000 loss=0.0000 max_reward=0.3000 n_loss_forwards=0.0000 n_transitions=0.0000 prompt_idx=3.0000 tree_leaves=11.0000 tree_nodes=16.0000 wall_sec=8.48
+[dream_cmp] epoch=0 step=5 avg_entropy=0.4453 avg_reward=0.3000 epoch=0.0000 loss=0.0000 max_reward=0.3000 n_loss_forwards=0.0000 n_transitions=0.0000 prompt_idx=4.0000 tree_leaves=11.0000 tree_nodes=16.0000 wall_sec=8.57
+[dream_cmp] epoch=0 step=6 avg_entropy=0.4401 avg_reward=0.3000 epoch=0.0000 loss=0.0000 max_reward=0.3000 n_loss_forwards=0.0000 n_transitions=0.0000 prompt_idx=5.0000 tree_leaves=11.0000 tree_nodes=16.0000 wall_sec=8.58
+[dream_cmp] epoch=0 step=7 avg_entropy=0.4635 avg_reward=0.1500 epoch=0.0000 loss=0.0000 max_reward=0.1500 n_loss_forwards=0.0000 n_transitions=0.0000 prompt_idx=6.0000 tree_leaves=11.0000 tree_nodes=16.0000 wall_sec=8.59
+[dream_cmp] epoch=0 step=8 avg_entropy=0.4661 avg_reward=0.3000 epoch=0.0000 loss=0.0000 max_reward=0.3000 n_loss_forwards=0.0000 n_transitions=0.0000 prompt_idx=7.0000 tree_leaves=11.0000 tree_nodes=16.0000 wall_sec=8.48
+[dream_cmp] epoch=0 step=9 avg_entropy=0.4349 avg_reward=0.3000 epoch=0.0000 loss=0.0000 max_reward=0.3000 n_loss_forwards=0.0000 n_transitions=0.0000 prompt_idx=8.0000 tree_leaves=11.0000 tree_nodes=16.0000 wall_sec=8.58
+[dream_cmp] epoch=0 step=10 avg_entropy=0.4714 avg_reward=0.0000 epoch=0.0000 loss=0.0000 max_reward=0.0000 n_loss_forwards=0.0000 n_transitions=0.0000 prompt_idx=9.0000 tree_leaves=11.0000 tree_nodes=16.0000 wall_sec=8.58
+[dream_cmp] epoch 0 mean metrics: {'loss': 0.0, 'avg_reward': 0.22499999999999992, 'max_reward': 0.225, 'tree_nodes': 16.0, 'tree_leaves': 11.0, 'avg_entropy': 0.4481770833333333, 'n_transitions': 0.0, 'n_loss_forwards': 0.0, 'wall_sec_epoch': 86.93635854311287}
+================================
+2/4 baseline_train (fixed-step MCTS-GRPO)
+================================
+[dream_cmp] phase=baseline_train train=True epochs=24 prompts=10
+[dream_cmp] adaptive_stepping=False branch_threshold=0.65 alpha_entropy=0.5
+[LoRA] trainable params: 20,185,088 / 7,635,801,600 (0.2643%)
+[dream-mcts diag] prompt='Write a Python function to check if a nu' rewards=[0.25, 0.25, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.25, 0.25, 0.25] best_completion="Here's a function to check if a number is prime:\\n\\n```python\\ndef is_prime(n):\\n    if n < 2:\\n        return False\\n                              "
+[dream_cmp] epoch=0 step=1 avg_entropy=0.4271 avg_reward=0.2773 epoch=0.0000 loss=1.6999 lr=0.0000 max_reward=0.3000 mean_abs_adv=0.7542 mean_w_ent=0.5000 mean_w_time=6.8550 mean_weight=7.1050 mean_weighted_adv_logp=1.6999 n_loss_forwards=5.0000 n_transitions=15.0000 prompt_idx=0.0000 tree_leaves=11.0000 tree_nodes=16.0000 wall_sec=4.62
+================================
+3/4 adaptive_default (adaptive stepping, default HP)
+================================
+[dream_cmp] phase=adaptive_default train=True epochs=24 prompts=10
+[dream_cmp] adaptive_stepping=True branch_threshold=0.65 alpha_entropy=0.5
+[LoRA] trainable params: 20,185,088 / 7,635,801,600 (0.2643%)
+[dream entropy diag] depth=1 n_masked=1 min=0.000001 mean=0.000001 max=0.000001
+[dream-mcts diag] prompt='Write a Python function to check if a nu' rewards=[0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3] best_completion='Here is a function to check if a number is prime:\\n\\n```python\\ndef is_prime(n):\\n    if n <= 1:\\n        return False\\n    if n <= 3:\\n        return True\\n    if n % '
+[dream_cmp] epoch=0 step=1 avg_entropy=0.4271 avg_reward=0.3000 epoch=0.0000 loss=0.0000 lr=0.0000 max_reward=0.3000 mean_abs_adv=0.0000 mean_w_ent=0.5000 mean_w_time=19.9954 mean_weight=20.2454 mean_weighted_adv_logp=0.0000 n_loss_forwards=5.0000 n_transitions=15.0000 prompt_idx=0.0000 tree_leaves=11.0000 tree_nodes=16.0000 wall_sec=10.21
+================================
+4/4 adaptive_alt_hp (adaptive + alpha_entropy=1.0, threshold=0.55)
+================================
+[dream_cmp] phase=adaptive_alt_hp train=True epochs=24 prompts=10
+[dream_cmp] adaptive_stepping=True branch_threshold=0.55 alpha_entropy=1.0
+[LoRA] trainable params: 20,185,088 / 7,635,801,600 (0.2643%)
+[dream entropy diag] depth=1 n_masked=1 min=0.000001 mean=0.000001 max=0.000001
+[dream-mcts diag] prompt='Write a Python function to check if a nu' rewards=[0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3] best_completion='Here is a function to check if a number is prime:\\n\\n```python\\ndef is_prime(n):\\n    if n <= 1:\\n        return False\\n    if n <= 3:\\n        return True\\n    if n % '
+[dream_cmp] epoch=0 step=1 avg_entropy=0.4271 avg_reward=0.3000 epoch=0.0000 loss=0.0000 lr=0.0000 max_reward=0.3000 mean_abs_adv=0.0000 mean_w_ent=0.5000 mean_w_time=19.9954 mean_weight=20.4954 mean_weighted_adv_logp=0.0000 n_loss_forwards=5.0000 n_transitions=15.0000 prompt_idx=0.0000 tree_leaves=11.0000 tree_nodes=16.0000 wall_sec=10.23
+================================
+Job finished at: Sat Mar 21 02:36:29 EDT 2026
+WandB group: dream_cmp_5283043  project: entropy-tree-grpo-dream
+Checkpoints: /home/biggs.s/EntropyTree-GRPO-Dream/checkpoints/dream_comparison/dream_cmp_5283043
+Slurm stdout/stderr (this job): /home/biggs.s/EntropyTree-GRPO-Dream/dream_comparison_5283043.out  .err

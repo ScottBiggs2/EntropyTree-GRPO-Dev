@@ -134,6 +134,8 @@ Shared flags: `--wandb_group` (script sets to `dream_cmp_$SLURM_JOB_ID`), `--run
 
 **Slurm / conda:** `run_dream_comparison.sh` uses the **same conda pattern as `run_experiment_2.sh`**: source `$HOME/miniconda/etc/profile.d/conda.sh` (then `miniconda3`, then `anaconda3`), then **`conda activate EntropyTreeGRPO_Dream_env`**. Your `conda info --base` is often **`~/miniconda`**, not `~/miniconda3` — that path is checked first. Then **`python -m pip install -r dream/requirements.txt`**. If you see `torchvision::nms` or Python **3.13**, the wrong interpreter was used.
 
+**Memory (OOM):** Training uses far more VRAM than `initial_eval` (no backward). If **`CUDA out of memory`** appears on the **second** prompt, the first `train_step` filled the GPU; the script now runs **`gc` + `torch.cuda.empty_cache()`** between training steps, and defaults use **`MAX_NEW_TOKENS=96`**, **`MAX_TREE_NODES=8`**, **`BRANCH_WIDTH=2`**. If WandB shows **only one step** for a training phase, check **`dream_comparison_<jobid>.err`** for OOM — then lower tree limits or `NUM_EPOCHS` / raise GPU memory.
+
 **Adaptive stepping sanity:** `H/log(V)` is usually **≤ 1**; a threshold **> 1** (e.g. the old `1.1` default) **never** early-stops on that test. If step 4 shows identical `steps_in_edge`, try lowering `--branch-threshold` (e.g. `0.5`) or widening `[min,max]`; see `DEVELOPMENT_PLAN.md` Appendix C.
 
 ---

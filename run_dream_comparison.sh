@@ -66,12 +66,13 @@ RUN_NAME="dream_cmp_${JOB_ID}"
 GROUP="$RUN_NAME"
 WANDB_PROJECT="${WANDB_PROJECT:-entropy-tree-grpo-dream}"
 
-# Denser curves in WandB (export NUM_EPOCHS=... before sbatch to override)
-NUM_EPOCHS="${NUM_EPOCHS:-24}"
-MAX_TREE_NODES="${MAX_TREE_NODES:-16}"
-BRANCH_WIDTH="${BRANCH_WIDTH:-3}"
+# Defaults sized for ~80GB A100 + Dream 7B LoRA + MCTS (OOM on 2nd step if too large).
+# Increase NUM_EPOCHS / tree after a successful dry run (export VAR=... before sbatch).
+NUM_EPOCHS="${NUM_EPOCHS:-12}"
+MAX_TREE_NODES="${MAX_TREE_NODES:-8}"
+BRANCH_WIDTH="${BRANCH_WIDTH:-2}"
 STEPS_PER_EXPANSION="${STEPS_PER_EXPANSION:-12}"
-MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-256}"
+MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-96}"
 MIN_ADAPT="${MIN_ADAPT:-4}"
 MAX_ADAPT="${MAX_ADAPT:-36}"
 BRANCH_THRESHOLD="${BRANCH_THRESHOLD:-0.65}"
