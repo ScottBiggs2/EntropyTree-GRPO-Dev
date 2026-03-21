@@ -75,3 +75,29 @@ def test_entropy_mcts_trainer_single_step_runs():
     assert metrics["tree_leaves"] >= 1.0
     assert metrics.get("n_loss_forwards", 0) <= metrics.get("n_transitions", 0)
 
+
+def test_entropy_mcts_trainer_eval_step_runs():
+    """eval_step builds tree and scores without optimizer / loss graph."""
+    cfg = MCTSConfig(
+        model_type="mdlm",
+        max_tree_nodes=5,
+        branch_width=2,
+        steps_per_expansion=4,
+        max_new_tokens=16,
+        total_denoising_steps=32,
+    )
+    model = _TinyMockModel(vocab_size=32).to(cfg.device)
+    tok = _TinyMockTokenizer(vocab_size=32)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    trainer = EntropyMCTSTrainer(
+        model=model,
+        tokenizer=tok,
+        config=cfg,
+        reward_fn=_dummy_reward,
+        optimizer=optimizer,
+    )
+    metrics = trainer.eval_step("test prompt")
+    assert metrics["tree_nodes"] >= 1.0
+    assert metrics["tree_leaves"] >= 1.0
+    assert metrics["n_transitions"] == 0.0
+

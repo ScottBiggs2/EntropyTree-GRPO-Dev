@@ -67,6 +67,53 @@ class EntropyMCTSTrainer:
         self.vocab_size = self.adapter.vocab_size
         self._diag_count = 0
 
+    def eval_step(self, prompt: str) -> Dict[str, float]:
+        """Build tree and score completions; no backward / optimizer (initial baseline)."""
+        self.model.eval()
+        with torch.no_grad():
+            root, leaves = self.tree_builder.build_tree(prompt)
+        if not leaves:
+            return {
+                "loss": 0.0,
+                "avg_reward": 0.0,
+                "max_reward": 0.0,
+                "tree_nodes": 1.0,
+                "tree_leaves": 0.0,
+                "avg_entropy": 0.0,
+                "n_transitions": 0.0,
+                "n_loss_forwards": 0.0,
+            }
+
+        completions = [
+            self.tokenizer.decode(
+                leaf.state[
+                    root.prompt_len : root.prompt_len + self.config.max_new_tokens
+                ].tolist(),
+                skip_special_tokens=True,
+            )
+            for leaf in leaves
+        ]
+        rewards = [self.reward_fn(c, prompt) for c in completions]
+
+        def count_nodes(n: MCTSNode) -> int:
+            return 1 + sum(count_nodes(c) for c in n.children)
+
+        avg_reward = sum(rewards) / len(rewards) if rewards else 0.0
+        max_reward = max(rewards) if rewards else 0.0
+        entropies = [n.entropy for n in [root] + leaves if n.entropy is not None]
+        avg_entropy = sum(entropies) / len(entropies) if entropies else 0.0
+
+        return {
+            "loss": 0.0,
+            "avg_reward": avg_reward,
+            "max_reward": max_reward,
+            "tree_nodes": float(count_nodes(root)),
+            "tree_leaves": float(len(leaves)),
+            "avg_entropy": avg_entropy,
+            "n_transitions": 0.0,
+            "n_loss_forwards": 0.0,
+        }
+
     def train_step(self, prompt: str) -> Dict[str, float]:
         """One training step: build tree, compute loss, update model."""
         self.model.eval()

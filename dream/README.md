@@ -58,7 +58,8 @@ dream/
 ├── scripts/
 │   ├── validate_dream.py      # Phase 0: load Dream 7B, forward + entropy checks
 │   ├── validate_dream_tree.py # Small real tree (fixed or adaptive stepping; optional LoRA)
-│   └── single_step_dream.py   # One training step (LoRA, adaptive flags, etc.)
+│   ├── single_step_dream.py   # One training step (LoRA, adaptive flags, etc.)
+│   └── run_dream_comparison.py # WandB comparison arms (initial eval, baseline train, adaptive variants)
 └── tests/
     ├── __init__.py
     ├── test_entropy_corrected.py
@@ -115,9 +116,19 @@ pip install -r dream/requirements.txt
 | **2 — Phase 0: load + logits** | `python dream/scripts/validate_dream.py` | Model loads, entropy in `[0, log(V)]`, no device errors | Looks great! |
 | **3 — Tree, fixed stepping** | `python dream/scripts/validate_dream_tree.py --max-tree-nodes 5 --branch-width 2 --steps-per-expansion 16 --max-new-tokens 128` | `Tree summary`, `Entropy summary`, `leaves >= 1` | All looks good! |
 | **4 — Tree, adaptive stepping** | `python dream/scripts/validate_dream_tree.py --adaptive-stepping --branch-threshold 0.65 --min-steps-per-expansion 8 --max-steps-per-expansion 48 --max-tree-nodes 5 --branch-width 2 --max-new-tokens 128` | Same as above **plus** `steps_in_edge` line with **unique** values (not always identical) when adaptive triggers | Working. Smart threshold next?|
-| **5 — Tree + LoRA** (optional) | `python dream/scripts/validate_dream_tree.py --lora --lora-r 8 --lora-alpha 16` | `[LoRA] trainable params: …`, tree still builds | If `AttributeError: module 'torch.distributed' has no attribute 'tensor'`, upgrade PEFT: `pip install --upgrade 'peft>=0.18.0'` | Looks great! |
-| **6 — One training step (~32GB)** | `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python dream/scripts/single_step_dream.py --lora --profile-memory --max-tree-nodes 5 --max-new-tokens 96 --steps-per-expansion 12` | prints `Metrics:` with finite `loss`; `n_loss_forwards` ≤ `n_transitions` | |
-| **7 — Training + adaptive** (optional) | same as 6 **plus** `--adaptive-stepping --branch-threshold 0.65 --min-steps-per-expansion 8 --max-steps-per-expansion 48` | completes; branching uses same config as `validate_dream_tree` | |
+| **5 — Tree + LoRA** (optional) | `python dream/scripts/validate_dream_tree.py --lora --lora-r 8 --lora-alpha 16` | `[LoRA] trainable params: …`, tree still builds | If `AttributeError: module 'torch.distributed' has no attribute 'tensor'`, upgrade PEFT: `pip install --upgrade 'peft>=0.18.0'` |  Looks good! |
+| **6 — One training step (~32GB)** | `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python dream/scripts/single_step_dream.py --lora --profile-memory --max-tree-nodes 5 --max-new-tokens 96 --steps-per-expansion 12` | prints `Metrics:` with finite `loss`; `n_loss_forwards` ≤ `n_transitions` | Good |
+| **7 — Training + adaptive** (optional) | `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python dream/scripts/single_step_dream.py --lora --profile-memory --max-tree-nodes 5 --max-new-tokens 96 --adaptive-stepping --branch-threshold 0.65 --min-steps-per-expansion 8 --max-steps-per-expansion 48` | completes; branching uses same config as `validate_dream_tree` | Good |
+| **8 — Light WandB comparison** | `export WANDB_API_KEY=...` then `sbatch run_dream_comparison.sh` (or run the four phases locally; see below) | One WandB **group** with four runs: `initial_eval` (no train, adaptive tree), `baseline_train` (fixed steps), `adaptive_default`, `adaptive_alt_hp` | Use for pipeline sanity + side-by-side curves |
+
+**Step 8 details (repo root):** `run_dream_comparison.sh` runs, in order:
+
+1. `python dream/scripts/run_dream_comparison.py --phase initial_eval ...` — **pre-train** metrics (`eval_step`, no optimizer).
+2. `--phase baseline_train` — **MCTS-GRPO with fixed** `steps_per_expansion` (`adaptive_stepping=False`).
+3. `--phase adaptive_default` — **adaptive stepping** + default `branch_threshold` / `alpha_entropy`.
+4. `--phase adaptive_alt_hp` — adaptive + **alternate** `alpha_entropy=1.0`, `branch_threshold=0.55` (smoke test that HP changes show up in WandB).
+
+Shared flags: `--wandb_group` (script sets to `dream_cmp_$SLURM_JOB_ID`), `--run_name`, `--lora`, tree limits, `checkpoints/dream_comparison/<run_name>/`. Override budget via env vars in the shell script (`NUM_EPOCHS`, `MAX_TREE_NODES`, …). Dry run without WandB: add `--no_wandb` to each Python invocation (edit script or call Python directly).
 
 **Adaptive stepping sanity:** `H/log(V)` is usually **≤ 1**; a threshold **> 1** (e.g. the old `1.1` default) **never** early-stops on that test. If step 4 shows identical `steps_in_edge`, try lowering `--branch-threshold` (e.g. `0.5`) or widening `[min,max]`; see `DEVELOPMENT_PLAN.md` Appendix C.
 
@@ -162,7 +173,7 @@ On a cloud machine with sufficient GPU memory (e.g. A100 40GB+):
 
 1b. **HuggingFace cache hardening (important for quotas)**:
 
-   The provided scripts (`validate_dream.py`, `validate_dream_tree.py`, `single_step_dream.py`) automatically set `HF_HOME` to `/scratch/<user>/hf_home` when `HF_HOME` is not already defined, to avoid home-dir disk quota / lockfile failures.
+   The provided scripts (`validate_dream.py`, `validate_dream_tree.py`, `single_step_dream.py`, `run_dream_comparison.py`) automatically set `HF_HOME` to `/scratch/<user>/hf_home` when `HF_HOME` is not already defined, to avoid home-dir disk quota / lockfile failures.
 
 2. **Validate Dream 7B** (Phase 0 — load, forward pass, entropy checks):
 
