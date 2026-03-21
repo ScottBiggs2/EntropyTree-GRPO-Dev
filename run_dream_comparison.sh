@@ -27,26 +27,60 @@ echo "Job ID: $SLURM_JOB_ID"
 echo "GPU: $CUDA_VISIBLE_DEVICES"
 echo "Working dir: $(pwd)"
 
-# Conda in batch: source conda.sh so activate works (same as run_experiment_2.sh)
+# Conda in batch: source conda.sh so activate works (same as run_experiment_2.sh).
+# Dream env name is **EntropyTreeGRPO_Dream_env** (Python 3.10) — see dream/README.md.
+# If activate fails silently, you get the wrong python (e.g. base 3.13) → torch/torchvision mismatch and no WandB.
 if [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
+  # shellcheck source=/dev/null
   source "$HOME/miniconda3/etc/profile.d/conda.sh"
 elif [ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]; then
+  # shellcheck source=/dev/null
   source "$HOME/anaconda3/etc/profile.d/conda.sh"
+else
+  echo "ERROR: conda.sh not found. Install Miniconda/Anaconda or edit this script." >&2
+  exit 1
 fi
-# Dream stack env (parallel to EntropyTreeGRPO_env in run_experiment_2.sh).
-# Prefix-only env: conda activate "/scratch/${USER}/conda_envs/EntropyTreeGRPO_Dream_env"
-conda activate EntropyTreeGRPO_Dream_env
+
+# 1) Same as README: named env (what you get after `conda create -n EntropyTreeGRPO_Dream_env ...`)
+if conda activate EntropyTreeGRPO_Dream_env; then
+  echo "Activated conda env: EntropyTreeGRPO_Dream_env (see dream/README.md)"
+# 2) Explicit override: export DREAM_CONDA_PREFIX=/path/to/env
+elif [ -n "${DREAM_CONDA_PREFIX:-}" ] && [ -x "${DREAM_CONDA_PREFIX}/bin/python" ]; then
+  echo "Activating DREAM_CONDA_PREFIX: $DREAM_CONDA_PREFIX"
+  conda activate "$DREAM_CONDA_PREFIX" || {
+    echo "ERROR: conda activate $DREAM_CONDA_PREFIX failed" >&2
+    exit 1
+  }
+# 3) README "Scratch" clone: conda activate /scratch/.../EntropyTreeGRPO_Dream_env
+elif [ -x "/scratch/${USER}/conda_envs/EntropyTreeGRPO_Dream_env/bin/python" ]; then
+  DREAM_SCRATCH="/scratch/${USER}/conda_envs/EntropyTreeGRPO_Dream_env"
+  echo "Activating scratch clone: $DREAM_SCRATCH"
+  conda activate "$DREAM_SCRATCH" || {
+    echo "ERROR: conda activate $DREAM_SCRATCH failed" >&2
+    exit 1
+  }
+else
+  echo "ERROR: Could not activate EntropyTreeGRPO_Dream_env." >&2
+  echo "  Create it: dream/README.md (conda create -n EntropyTreeGRPO_Dream_env python=3.10)" >&2
+  echo "  Or clone to scratch, or set DREAM_CONDA_PREFIX to your env path." >&2
+  exit 1
+fi
+
+echo "CONDA_PREFIX=${CONDA_PREFIX:-}"
+echo "PYTHON=$(command -v python)"
+python -c "import sys; print('executable:', sys.executable); print('version:', sys.version.split()[0])"
 
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
 echo "================================"
-echo "Installing dream/requirements.txt"
+echo "Installing dream/requirements.txt (same interpreter as above)"
 echo "================================"
-pip install -r dream/requirements.txt -q
+python -m pip install -r dream/requirements.txt -q
 if [ $? -ne 0 ]; then echo "ERROR: pip install failed"; exit 1; fi
 
 echo "Python: $(python --version)"
 echo "PyTorch: $(python -c 'import torch; print(torch.__version__)')"
+echo "Torchvision: $(python -c 'import torchvision; print(torchvision.__version__)' 2>/dev/null || echo n/a)"
 echo "CUDA: $(python -c 'import torch; print(torch.cuda.is_available())')"
 
 JOB_ID="${SLURM_JOB_ID:-local}"

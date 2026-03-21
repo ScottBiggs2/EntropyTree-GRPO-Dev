@@ -191,24 +191,7 @@ def main() -> int:
     print(f"[dream_cmp] phase={args.phase} train={train} epochs={epochs} prompts={len(prompts)}")
     print(f"[dream_cmp] adaptive_stepping={adaptive} branch_threshold={branch_threshold} alpha_entropy={alpha_entropy}")
 
-    model, tokenizer = load_model_and_tokenizer(cfg)
-    if cfg.gradient_checkpointing and hasattr(model, "gradient_checkpointing_enable"):
-        model.gradient_checkpointing_enable()
-
-    reward_fn = SyntaxReward()
-    optimizer = torch.optim.AdamW(
-        (p for p in model.parameters() if p.requires_grad),
-        lr=cfg.learning_rate,
-    )
-    total_steps = max(1, epochs * len(prompts))
-    scheduler = build_lr_scheduler(
-        optimizer,
-        total_steps,
-        warmup_ratio=cfg.warmup_ratio,
-        min_lr_ratio=cfg.min_lr_ratio,
-    )
-    trainer = EntropyMCTSTrainer(model, tokenizer, cfg, reward_fn, optimizer, scheduler)
-
+    # Init W&B before model load so a failed load still creates a run (config visible in UI).
     use_wandb = not args.no_wandb
     if use_wandb:
         import wandb
@@ -228,7 +211,6 @@ def main() -> int:
         )
 
     global_step = 0
-    t_run0 = time.perf_counter()
 
     def _log_wandb_step(metrics: Dict[str, Any], extra: Dict[str, float]) -> None:
         """Same metric names across arms (like scripts/run_experiment_2.py) unless --wandb_prefixed_keys."""
@@ -245,117 +227,143 @@ def main() -> int:
             row = {f"{phase_tag}/{k}": v for k, v in row.items()}
         wandb.log(row, step=global_step)
 
-    for epoch in range(max(1, epochs) if train else 1):
-        if not train and epoch > 0:
-            break
-        t_ep = time.perf_counter()
-        epoch_means: Dict[str, float] = {}
-        n_prompts = 0
-        for pi, prompt in enumerate(prompts):
-            t_step0 = time.perf_counter()
-            if train:
-                metrics = trainer.train_step(prompt)
-            else:
-                metrics = trainer.eval_step(prompt)
-            metrics["epoch"] = float(epoch)
-            metrics["prompt_idx"] = float(pi)
-            step_wall = time.perf_counter() - t_step0
-            n_prompts += 1
-            for k, v in metrics.items():
-                if isinstance(v, (int, float)) and k not in (
-                    "epoch",
-                    "prompt_idx",
-                ):
-                    epoch_means[k] = epoch_means.get(k, 0.0) + float(v)
-            _log_wandb_step(
-                metrics,
-                {
-                    "wall_sec_step": float(step_wall),
-                    "phase_idx": phase_idx,
-                    "training_step": 1.0 if train else 0.0,
-                },
-            )
-            global_step += 1
-            numeric_keys = sorted(
-                k
-                for k, v in metrics.items()
-                if isinstance(v, (int, float)) and not isinstance(v, bool)
-            )
-            detail = " ".join(f"{k}={float(metrics[k]):.4f}" for k in numeric_keys)
-            print(f"[dream_cmp] epoch={epoch} step={global_step} {detail} wall_sec={step_wall:.2f}")
+    try:
+        model, tokenizer = load_model_and_tokenizer(cfg)
+        if cfg.gradient_checkpointing and hasattr(model, "gradient_checkpointing_enable"):
+            model.gradient_checkpointing_enable()
 
-            if train and args.save_every_steps > 0 and global_step % args.save_every_steps == 0:
-                save_dir = Path(cfg.checkpoint_dir) / "dream_comparison" / args.run_name
-                save_dir.mkdir(parents=True, exist_ok=True)
-                ckpt = save_dir / f"{args.phase}_step_{global_step}.pt"
-                torch.save(
+        reward_fn = SyntaxReward()
+        optimizer = torch.optim.AdamW(
+            (p for p in model.parameters() if p.requires_grad),
+            lr=cfg.learning_rate,
+        )
+        total_steps = max(1, epochs * len(prompts))
+        scheduler = build_lr_scheduler(
+            optimizer,
+            total_steps,
+            warmup_ratio=cfg.warmup_ratio,
+            min_lr_ratio=cfg.min_lr_ratio,
+        )
+        trainer = EntropyMCTSTrainer(model, tokenizer, cfg, reward_fn, optimizer, scheduler)
+
+        t_run0 = time.perf_counter()
+
+        for epoch in range(max(1, epochs) if train else 1):
+            if not train and epoch > 0:
+                break
+            t_ep = time.perf_counter()
+            epoch_means: Dict[str, float] = {}
+            n_prompts = 0
+            for pi, prompt in enumerate(prompts):
+                t_step0 = time.perf_counter()
+                if train:
+                    metrics = trainer.train_step(prompt)
+                else:
+                    metrics = trainer.eval_step(prompt)
+                metrics["epoch"] = float(epoch)
+                metrics["prompt_idx"] = float(pi)
+                step_wall = time.perf_counter() - t_step0
+                n_prompts += 1
+                for k, v in metrics.items():
+                    if isinstance(v, (int, float)) and k not in (
+                        "epoch",
+                        "prompt_idx",
+                    ):
+                        epoch_means[k] = epoch_means.get(k, 0.0) + float(v)
+                _log_wandb_step(
+                    metrics,
                     {
-                        "model": model.state_dict(),
-                        "optimizer": optimizer.state_dict(),
-                        "step": global_step,
-                        "phase": args.phase,
+                        "wall_sec_step": float(step_wall),
+                        "phase_idx": phase_idx,
+                        "training_step": 1.0 if train else 0.0,
                     },
-                    ckpt,
                 )
-                print(f"[dream_cmp] saved {ckpt}")
+                global_step += 1
+                numeric_keys = sorted(
+                    k
+                    for k, v in metrics.items()
+                    if isinstance(v, (int, float)) and not isinstance(v, bool)
+                )
+                detail = " ".join(f"{k}={float(metrics[k]):.4f}" for k in numeric_keys)
+                print(f"[dream_cmp] epoch={epoch} step={global_step} {detail} wall_sec={step_wall:.2f}")
 
-        for k in list(epoch_means.keys()):
-            epoch_means[k] /= max(n_prompts, 1)
-        epoch_means["wall_sec_epoch"] = time.perf_counter() - t_ep
-        # One summary row per epoch (flat names so all arms share charts).
-        epoch_row = {f"epoch_mean_{k}": float(v) for k, v in epoch_means.items()}
-        epoch_row["epoch"] = float(epoch)
-        epoch_row["phase_idx"] = phase_idx
-        epoch_row["training_step"] = 1.0 if train else 0.0
+                if train and args.save_every_steps > 0 and global_step % args.save_every_steps == 0:
+                    save_dir = Path(cfg.checkpoint_dir) / "dream_comparison" / args.run_name
+                    save_dir.mkdir(parents=True, exist_ok=True)
+                    ckpt = save_dir / f"{args.phase}_step_{global_step}.pt"
+                    torch.save(
+                        {
+                            "model": model.state_dict(),
+                            "optimizer": optimizer.state_dict(),
+                            "step": global_step,
+                            "phase": args.phase,
+                        },
+                        ckpt,
+                    )
+                    print(f"[dream_cmp] saved {ckpt}")
+
+            for k in list(epoch_means.keys()):
+                epoch_means[k] /= max(n_prompts, 1)
+            epoch_means["wall_sec_epoch"] = time.perf_counter() - t_ep
+            # One summary row per epoch (flat names so all arms share charts).
+            epoch_row = {f"epoch_mean_{k}": float(v) for k, v in epoch_means.items()}
+            epoch_row["epoch"] = float(epoch)
+            epoch_row["phase_idx"] = phase_idx
+            epoch_row["training_step"] = 1.0 if train else 0.0
+            if use_wandb:
+                import wandb
+
+                if args.wandb_prefixed_keys:
+                    wandb.log(
+                        {f"{phase_tag}/{k}": v for k, v in epoch_row.items()},
+                        step=max(global_step - 1, 0),
+                    )
+                else:
+                    wandb.log(epoch_row, step=max(global_step - 1, 0))
+
+            print(f"[dream_cmp] epoch {epoch} mean metrics: {epoch_means}")
+
+        if train:
+            save_dir = Path(cfg.checkpoint_dir) / "dream_comparison" / args.run_name
+            save_dir.mkdir(parents=True, exist_ok=True)
+            final = save_dir / f"{args.phase}_final.pt"
+            torch.save(
+                {
+                    "model": model.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                    "step": global_step,
+                    "phase": args.phase,
+                },
+                final,
+            )
+            with open(save_dir / f"{args.phase}_config.json", "w") as f:
+                json.dump(config_to_jsonable(cfg), f, indent=2)
+            print(f"[dream_cmp] wrote {final}")
+
         if use_wandb:
             import wandb
 
+            final_step = global_step - 1 if global_step else 0
+            summary = {
+                "total_wall_sec": time.perf_counter() - t_run0,
+                "total_steps": float(global_step),
+                "phase_idx": phase_idx,
+            }
             if args.wandb_prefixed_keys:
                 wandb.log(
-                    {f"{phase_tag}/{k}": v for k, v in epoch_row.items()},
-                    step=max(global_step - 1, 0),
+                    {f"{phase_tag}/{k}": v for k, v in summary.items()},
+                    step=final_step,
                 )
             else:
-                wandb.log(epoch_row, step=max(global_step - 1, 0))
+                wandb.log(summary, step=final_step)
 
-        print(f"[dream_cmp] epoch {epoch} mean metrics: {epoch_means}")
+        return 0
+    finally:
+        if use_wandb:
+            import wandb
 
-    if train:
-        save_dir = Path(cfg.checkpoint_dir) / "dream_comparison" / args.run_name
-        save_dir.mkdir(parents=True, exist_ok=True)
-        final = save_dir / f"{args.phase}_final.pt"
-        torch.save(
-            {
-                "model": model.state_dict(),
-                "optimizer": optimizer.state_dict(),
-                "step": global_step,
-                "phase": args.phase,
-            },
-            final,
-        )
-        with open(save_dir / f"{args.phase}_config.json", "w") as f:
-            json.dump(config_to_jsonable(cfg), f, indent=2)
-        print(f"[dream_cmp] wrote {final}")
-
-    if use_wandb:
-        import wandb
-
-        final_step = global_step - 1 if global_step else 0
-        summary = {
-            "total_wall_sec": time.perf_counter() - t_run0,
-            "total_steps": float(global_step),
-            "phase_idx": phase_idx,
-        }
-        if args.wandb_prefixed_keys:
-            wandb.log(
-                {f"{phase_tag}/{k}": v for k, v in summary.items()},
-                step=final_step,
-            )
-        else:
-            wandb.log(summary, step=final_step)
-        wandb.finish()
-
-    return 0
+            if wandb.run is not None:
+                wandb.finish()
 
 
 if __name__ == "__main__":

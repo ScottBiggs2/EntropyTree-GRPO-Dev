@@ -130,7 +130,9 @@ pip install -r dream/requirements.txt
 
 **WandB layout:** metrics are logged with **shared names** across arms (`loss`, `avg_reward`, `wall_sec_step`, `epoch_mean_*`, …), similar to `scripts/run_experiment_2.py`, so in the UI you can select the whole **group** and compare runs on the **same charts**. Per-step logs include all numeric trainer fields; job logs print the full metric line. Default prompt list has **10** short code tasks; override with `--prompts_file`. Use `--wandb_prefixed_keys` if you prefer separate `phase/metric` charts.
 
-Shared flags: `--wandb_group` (script sets to `dream_cmp_$SLURM_JOB_ID`), `--run_name`, `--lora`, tree limits, `checkpoints/dream_comparison/<run_name>/`. Override budget via env vars in the shell script (`NUM_EPOCHS`, default **12** epochs for denser curves, `MAX_TREE_NODES`, …). Dry run without WandB: add `--no_wandb` to each Python invocation (edit script or call Python directly).
+Shared flags: `--wandb_group` (script sets to `dream_cmp_$SLURM_JOB_ID`), `--run_name`, `--lora`, tree limits, `checkpoints/dream_comparison/<run_name>/`. Override budget via env vars in the shell script (`NUM_EPOCHS`, `MAX_TREE_NODES`, …). Dry run without WandB: add `--no_wandb` to each Python invocation (edit script or call Python directly).
+
+**Slurm / conda:** `run_dream_comparison.sh` must activate the **Dream** env (Python **3.10** + pinned torch). It prefers `conda activate /scratch/$USER/conda_envs/EntropyTreeGRPO_Dream_env` when that prefix exists, else `conda activate EntropyTreeGRPO_Dream_env`. Override with `export DREAM_CONDA_PREFIX=/path/to/env`. The script uses **`python -m pip`** so installs go to the same interpreter. If you see `torchvision::nms` / wrong Python 3.13 in the traceback, conda activation failed and you hit the wrong env.
 
 **Adaptive stepping sanity:** `H/log(V)` is usually **≤ 1**; a threshold **> 1** (e.g. the old `1.1` default) **never** early-stops on that test. If step 4 shows identical `steps_in_edge`, try lowering `--branch-threshold` (e.g. `0.5`) or widening `[min,max]`; see `DEVELOPMENT_PLAN.md` Appendix C.
 
