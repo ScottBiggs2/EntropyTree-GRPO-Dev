@@ -67,6 +67,11 @@ class WeightedGRPOLoss:
             dev = next(model.parameters()).device
             return torch.tensor(0.0, device=dev), {"n_transitions": 0}
 
+        n_tr = len(transitions)
+        mean_edge_delta = (
+            sum(t.child_step_index - t.step_index for t in transitions) / n_tr
+        )
+
         if backward_per_transition is None:
             backward_per_transition = getattr(
                 self.config, "loss_backward_per_transition", True
@@ -79,19 +84,28 @@ class WeightedGRPOLoss:
         sum_abs_adv = 0.0
         sum_w_time = 0.0
         sum_w_ent = 0.0
+        sum_w_ent_raw = 0.0
+        n_clamped_low = 0
+        n_clamped_high = 0
         sum_weight = 0.0
         sum_weighted_term = 0.0
 
         def process_one_trans(
             trans: TreeTransition, raw_log_prob: torch.Tensor
         ) -> torch.Tensor:
-            nonlocal sum_abs_adv, sum_w_time, sum_w_ent, sum_weight, sum_weighted_term
+            nonlocal sum_abs_adv, sum_w_time, sum_w_ent, sum_w_ent_raw, n_clamped_low, n_clamped_high, sum_weight, sum_weighted_term
             changed = self._transition_mask_change(trans)
             n_tok = max(int(changed.sum().item()), 1)
             log_prob = raw_log_prob / n_tok
 
             w_time = trans.time_weight
             w_ent = trans.entropy_weight
+            ew_raw = float(getattr(trans, "entropy_weight_raw", w_ent))
+            sum_w_ent_raw += ew_raw
+            if ew_raw < self.config.entropy_weight_min - 1e-12:
+                n_clamped_low += 1
+            elif ew_raw > self.config.entropy_weight_max + 1e-12:
+                n_clamped_high += 1
             w = self.config.alpha_time * w_time + self.config.alpha_entropy * w_ent
             contrib = -w * float(trans.advantage) * log_prob
 
@@ -154,6 +168,10 @@ class WeightedGRPOLoss:
                 "mean_abs_adv": sum_abs_adv / n,
                 "mean_w_time": sum_w_time / n,
                 "mean_w_ent": sum_w_ent / n,
+                "mean_w_ent_raw": sum_w_ent_raw / n,
+                "frac_entropy_clamped_low": float(n_clamped_low) / n,
+                "frac_entropy_clamped_high": float(n_clamped_high) / n,
+                "mean_edge_denoising_delta": mean_edge_delta,
                 "mean_weight": sum_weight / n,
                 "mean_weighted_adv_logp": sum_weighted_term / n,
                 "n_loss_forwards": float(
@@ -206,6 +224,10 @@ class WeightedGRPOLoss:
             "mean_abs_adv": sum_abs_adv / n,
             "mean_w_time": sum_w_time / n,
             "mean_w_ent": sum_w_ent / n,
+            "mean_w_ent_raw": sum_w_ent_raw / n,
+            "frac_entropy_clamped_low": float(n_clamped_low) / n,
+            "frac_entropy_clamped_high": float(n_clamped_high) / n,
+            "mean_edge_denoising_delta": mean_edge_delta,
             "mean_weight": sum_weight / n,
             "mean_weighted_adv_logp": sum_weighted_term / n,
             "n_loss_forwards": float(
@@ -223,7 +245,7 @@ class WeightedGRPOLoss:
                 child_step = c.step_index
                 tw = self.time_weighter.get_interval_weight(parent_step, child_step)
 
-                ew = self.entropy_computer.compute_entropy_weight(
+                ew_raw = self.entropy_computer.compute_entropy_weight(
                     measured_masked_mean=node.entropy or 0.0,
                     vocab_size=vocab_size,
                     masking_ratio=node.masking_ratio(),
@@ -231,7 +253,7 @@ class WeightedGRPOLoss:
                 )
                 ew = max(
                     self.config.entropy_weight_min,
-                    min(self.config.entropy_weight_max, ew),
+                    min(self.config.entropy_weight_max, ew_raw),
                 )
 
                 trans = TreeTransition(
@@ -245,6 +267,7 @@ class WeightedGRPOLoss:
                     entropy=node.entropy or 0.0,
                     time_weight=tw,
                     entropy_weight=ew,
+                    entropy_weight_raw=float(ew_raw),
                 )
                 out.append(trans)
                 go(c)
@@ -282,3 +305,27 @@ class WeightedGRPOLoss:
             parent_attention_mask.unsqueeze(0),
         )[0]
         return self._log_prob_from_logits(logits, parent_state, child_state)
+
+    def trajectory_log_prob_with_count(
+        self,
+        model: torch.nn.Module,
+        transitions: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+    ) -> Tuple[torch.Tensor, int]:
+        """Sum log p along a single trajectory; also count mask→token positions (for normalization).
+
+        Used by ``BaselineGRPOTrainer`` (non-tree GRPO). ``model`` is unused;
+        gradients flow through ``self.adapter`` (same as tree loss).
+        """
+        del model
+        if not transitions:
+            dev = next(self.adapter.model.parameters()).device
+            return torch.tensor(0.0, device=dev), 0
+        total_lp: Optional[torch.Tensor] = None
+        total_tokens = 0
+        for p, c, a in transitions:
+            changed = (p != c) & (p == self.mask_id)
+            total_tokens += int(changed.sum().item())
+            lp = self._log_prob_transition(self.adapter, p, c, a)
+            total_lp = lp if total_lp is None else (total_lp + lp)
+        assert total_lp is not None
+        return total_lp, total_tokens

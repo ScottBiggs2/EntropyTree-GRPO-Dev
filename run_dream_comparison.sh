@@ -1,5 +1,5 @@
 #!/bin/bash
-# Dream 7B: light WandB comparison (initial eval, fixed-step train, adaptive default, adaptive alt HP).
+# Dream 7B: WandB comparison (initial eval, MCTS-GRPO, flat LoRA GRPO, optional dense flat GRPO, adaptive arms).
 # Same Slurm / conda / pip pattern as run_experiment_2.sh — submit from repo root.
 #
 # Slurm opens stdout/stderr BEFORE this script runs. Do NOT use logs/... unless that
@@ -77,7 +77,13 @@ MIN_ADAPT="${MIN_ADAPT:-4}"
 MAX_ADAPT="${MAX_ADAPT:-36}"
 BRANCH_THRESHOLD="${BRANCH_THRESHOLD:-0.65}"
 LEARNING_RATE="${LEARNING_RATE:-5e-6}"
+# Loosen from 0.5 default so mean_w_ent is not always pinned at the floor (see dream/docs/WANDB_METRICS.md)
+ENTROPY_WEIGHT_MIN="${ENTROPY_WEIGHT_MIN:-0.2}"
+ENTROPY_WEIGHT_MAX="${ENTROPY_WEIGHT_MAX:-2.0}"
 SAVE_EVERY="${SAVE_EVERY:-0}"
+NUM_BASELINE_SAMPLES="${NUM_BASELINE_SAMPLES:-4}"
+# Full fine-tune flat GRPO (no LoRA) — VRAM-heavy (~80GB class for 7B). 0 = skip this arm.
+RUN_GRPO_DENSE_BASELINE="${RUN_GRPO_DENSE_BASELINE:-0}"
 
 COMMON=(
   --device cuda
@@ -92,29 +98,48 @@ COMMON=(
   --min_steps_per_expansion "$MIN_ADAPT"
   --max_steps_per_expansion "$MAX_ADAPT"
   --branch_threshold "$BRANCH_THRESHOLD"
+  --entropy-weight-min "$ENTROPY_WEIGHT_MIN"
+  --entropy-weight-max "$ENTROPY_WEIGHT_MAX"
   --learning_rate "$LEARNING_RATE"
   --checkpoint_dir "$(pwd)/checkpoints"
   --save_every_steps "$SAVE_EVERY"
+  --num-baseline-samples "$NUM_BASELINE_SAMPLES"
   --lora
 )
 
 echo "================================"
-echo "1/4 initial_eval (no training; adaptive tree)"
+echo "1/6 initial_eval (no training; adaptive tree)"
 echo "================================"
 python dream/scripts/run_dream_comparison.py --phase initial_eval "${COMMON[@]}"
 
 echo "================================"
-echo "2/4 baseline_train (fixed-step MCTS-GRPO)"
+echo "2/6 baseline_train — MCTS / tree GRPO (fixed steps, LoRA; NOT dense flat GRPO)"
 echo "================================"
 python dream/scripts/run_dream_comparison.py --phase baseline_train "${COMMON[@]}"
 
 echo "================================"
-echo "3/4 adaptive_default (adaptive stepping, default HP)"
+echo "3/6 grpo_lora_baseline (flat GRPO, same LoRA r/α as tree)"
+echo "================================"
+python dream/scripts/run_dream_comparison.py --phase grpo_lora_baseline "${COMMON[@]}"
+
+if [ "$RUN_GRPO_DENSE_BASELINE" = "1" ]; then
+  echo "================================"
+  echo "4/6 grpo_dense_baseline (flat GRPO, full fine-tune — no LoRA; ignores --lora)"
+  echo "================================"
+  python dream/scripts/run_dream_comparison.py --phase grpo_dense_baseline "${COMMON[@]}"
+else
+  echo "================================"
+  echo "Skipping grpo_dense_baseline (set RUN_GRPO_DENSE_BASELINE=1 to run dense full-FT flat GRPO)"
+  echo "================================"
+fi
+
+echo "================================"
+echo "5/6 adaptive_default (adaptive stepping, default HP)"
 echo "================================"
 python dream/scripts/run_dream_comparison.py --phase adaptive_default "${COMMON[@]}"
 
 echo "================================"
-echo "4/4 adaptive_alt_hp (adaptive + alpha_entropy=1.0, threshold=0.55)"
+echo "6/6 adaptive_alt_hp (adaptive + alpha_entropy=1.0, threshold=0.55)"
 echo "================================"
 python dream/scripts/run_dream_comparison.py --phase adaptive_alt_hp "${COMMON[@]}"
 

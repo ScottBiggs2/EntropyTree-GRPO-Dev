@@ -74,4 +74,6 @@ class TreeTransition:
     entropy: float
     time_weight: float
     entropy_weight: float
+    # Pre-clamp value from EntropyComputer (for diagnostics; loss uses entropy_weight).
+    entropy_weight_raw: float = 0.0
 

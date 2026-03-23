@@ -3,10 +3,12 @@
 Light Dream 7B comparison runs with WandB (entropy-tree + LoRA).
 
 Phases (run separately or via run_dream_comparison.sh):
-  initial_eval     — tree build + SyntaxReward only, no optimizer (pre-train snapshot)
-  baseline_train   — fixed-step MCTS-GRPO (adaptive_stepping=False); train N epochs
-  adaptive_default — adaptive stepping + default branch_threshold / alpha_entropy
-  adaptive_alt_hp  — adaptive + alternate HP (e.g. higher alpha_entropy) to sanity-check logging
+  initial_eval          — tree build + SyntaxReward only, no optimizer (pre-train snapshot)
+  baseline_train        — **MCTS / tree** GRPO, fixed steps (NOT dense; use grpo_* for flat GRPO)
+  grpo_lora_baseline    — flat trajectory GRPO (no tree), LoRA — same r/α as tree when --lora
+  grpo_dense_baseline   — flat trajectory GRPO, **full fine-tune** (ignores --lora); needs big GPU
+  adaptive_default      — adaptive stepping + default branch_threshold / alpha_entropy
+  adaptive_alt_hp       — adaptive + alternate HP (e.g. higher alpha_entropy) to sanity-check logging
 
 WandB: by default logs flat keys (loss, avg_reward, wall_sec_step, …) like scripts/run_experiment_2.py
 so runs in the same --wandb_group overlay on shared charts. Use --wandb_prefixed_keys for phase/* charts.
@@ -14,6 +16,8 @@ so runs in the same --wandb_group overlay on shared charts. Use --wandb_prefixed
 Usage (repo root):
   python dream/scripts/run_dream_comparison.py --phase initial_eval --wandb_project entropy-tree-grpo-dream
   python dream/scripts/run_dream_comparison.py --phase baseline_train --num_epochs 3 --run_name my_run
+  python dream/scripts/run_dream_comparison.py --phase grpo_lora_baseline --lora --lora-r 8 --lora-alpha 16
+  python dream/scripts/run_dream_comparison.py --phase grpo_dense_baseline   # full FT; omit --lora (forced off)
 """
 from __future__ import annotations
 
@@ -56,7 +60,7 @@ import torch
 
 from dream.src.config import MCTSConfig
 from dream.src.rewards import SyntaxReward
-from dream.src.trainer import EntropyMCTSTrainer
+from dream.src.trainer import BaselineGRPOTrainer, EntropyMCTSTrainer
 from dream.src.utils import build_lr_scheduler, load_model_and_tokenizer
 
 
@@ -84,6 +88,8 @@ def load_prompts(path: str | None) -> List[str]:
 PHASE_ORDER = (
     "initial_eval",
     "baseline_train",
+    "grpo_lora_baseline",
+    "grpo_dense_baseline",
     "adaptive_default",
     "adaptive_alt_hp",
 )
@@ -117,6 +123,8 @@ def main() -> int:
         choices=(
             "initial_eval",
             "baseline_train",
+            "grpo_lora_baseline",
+            "grpo_dense_baseline",
             "adaptive_default",
             "adaptive_alt_hp",
         ),
@@ -140,7 +148,25 @@ def main() -> int:
     p.add_argument("--lora", action="store_true", help="PEFT LoRA (recommended on ~32GB)")
     p.add_argument("--lora-r", type=int, default=8)
     p.add_argument("--lora-alpha", type=int, default=16)
+    p.add_argument(
+        "--num-baseline-samples",
+        type=int,
+        default=4,
+        help="K trajectories per prompt for grpo_lora_baseline / grpo_dense_baseline (flat GRPO; default 4).",
+    )
     p.add_argument("--learning_rate", type=float, default=5e-6)
+    p.add_argument(
+        "--entropy-weight-min",
+        type=float,
+        default=0.2,
+        help="Clamp floor for loss entropy weight (default 0.2; was 0.5 in MCTSConfig — many edges hit the floor).",
+    )
+    p.add_argument(
+        "--entropy-weight-max",
+        type=float,
+        default=2.0,
+        help="Clamp ceiling for loss entropy weight.",
+    )
     p.add_argument("--checkpoint_dir", type=str, default="checkpoints")
     p.add_argument("--save_every_steps", type=int, default=0, help="0 = no checkpoints")
     p.add_argument(
@@ -163,12 +189,23 @@ def main() -> int:
         adaptive = True
     elif args.phase == "baseline_train":
         adaptive = False
+    elif args.phase == "grpo_lora_baseline":
+        adaptive = False
+    elif args.phase == "grpo_dense_baseline":
+        adaptive = False
     elif args.phase == "adaptive_default":
         adaptive = True
     elif args.phase == "adaptive_alt_hp":
         adaptive = True
         alpha_entropy = 1.0  # arbitrary contrast vs default 0.5
         branch_threshold = 0.55  # slightly easier early-stop
+
+    # Dense flat GRPO: always full fine-tune (no LoRA), even if the shell passes --lora.
+    use_lora = False if args.phase == "grpo_dense_baseline" else args.lora
+    if args.phase == "grpo_dense_baseline" and args.lora:
+        print(
+            "[dream_cmp] grpo_dense_baseline: ignoring --lora (this phase is full dense fine-tune)."
+        )
 
     cfg = MCTSConfig(
         model_type="dream",
@@ -184,21 +221,38 @@ def main() -> int:
         max_steps_per_expansion=args.max_steps_per_expansion,
         branch_threshold=branch_threshold,
         alpha_entropy=alpha_entropy,
+        entropy_weight_min=args.entropy_weight_min,
+        entropy_weight_max=args.entropy_weight_max,
         learning_rate=args.learning_rate,
-        use_lora=args.lora,
+        use_lora=use_lora,
         lora_r=args.lora_r,
         lora_alpha=args.lora_alpha,
         gradient_checkpointing=True,
         wandb_project=args.wandb_project,
         run_name=args.run_name,
         checkpoint_dir=args.checkpoint_dir,
+        num_baseline_samples=args.num_baseline_samples,
     )
 
     train = args.phase != "initial_eval"
     epochs = 0 if args.phase == "initial_eval" else args.num_epochs
 
-    print(f"[dream_cmp] phase={args.phase} train={train} epochs={epochs} prompts={len(prompts)}")
-    print(f"[dream_cmp] adaptive_stepping={adaptive} branch_threshold={branch_threshold} alpha_entropy={alpha_entropy}")
+    print(
+        f"[dream_cmp] phase={args.phase} train={train} epochs={epochs} prompts={len(prompts)}"
+        + (
+            f" num_baseline_samples={args.num_baseline_samples}"
+            if args.phase in ("grpo_lora_baseline", "grpo_dense_baseline")
+            else ""
+        )
+    )
+    print(
+        f"[dream_cmp] adaptive_stepping={adaptive} branch_threshold={branch_threshold} "
+        f"alpha_entropy={alpha_entropy} entropy_weight_min={args.entropy_weight_min}"
+    )
+    if args.phase == "baseline_train":
+        print(
+            "[dream_cmp] NOTE: baseline_train is **MCTS (tree)** GRPO, not flat/dense GRPO."
+        )
 
     # Init W&B before model load so a failed load still creates a run (config visible in UI).
     use_wandb = not args.no_wandb
@@ -210,7 +264,21 @@ def main() -> int:
             project=args.wandb_project,
             name=f"{args.run_name}_{args.phase}",
             group=group,
-            tags=[args.phase, "dream", "lora" if args.lora else "full_ft"],
+            tags=[
+                args.phase,
+                "dream",
+                "lora" if use_lora else "full_ft",
+                *(
+                    ["grpo_flat", f"lora_r{args.lora_r}"]
+                    if args.phase == "grpo_lora_baseline"
+                    else []
+                ),
+                *(
+                    ["grpo_flat", "dense_grpo", "full_ft"]
+                    if args.phase == "grpo_dense_baseline"
+                    else []
+                ),
+            ],
             config={
                 **config_to_jsonable(cfg),
                 "phase": args.phase,
@@ -253,7 +321,26 @@ def main() -> int:
             warmup_ratio=cfg.warmup_ratio,
             min_lr_ratio=cfg.min_lr_ratio,
         )
-        trainer = EntropyMCTSTrainer(model, tokenizer, cfg, reward_fn, optimizer, scheduler)
+        if args.phase in ("grpo_lora_baseline", "grpo_dense_baseline"):
+            trainer = BaselineGRPOTrainer(
+                model, tokenizer, cfg, reward_fn, optimizer, scheduler
+            )
+        else:
+            trainer = EntropyMCTSTrainer(
+                model, tokenizer, cfg, reward_fn, optimizer, scheduler
+            )
+
+        # Log these every step so W&B charts show which loss knobs apply (see dream/docs/WANDB_METRICS.md).
+        wb_cfg_diag = {
+            "cfg_alpha_time": float(cfg.alpha_time),
+            "cfg_alpha_entropy": float(cfg.alpha_entropy),
+            "cfg_entropy_weight_min": float(cfg.entropy_weight_min),
+            "cfg_entropy_weight_max": float(cfg.entropy_weight_max),
+            "cfg_adaptive_stepping": 1.0 if cfg.adaptive_stepping else 0.0,
+            "cfg_branch_threshold": float(cfg.branch_threshold),
+            "cfg_num_baseline_samples": float(cfg.num_baseline_samples),
+            "cfg_use_lora": 1.0 if cfg.use_lora else 0.0,
+        }
 
         t_run0 = time.perf_counter()
 
@@ -285,6 +372,7 @@ def main() -> int:
                         "wall_sec_step": float(step_wall),
                         "phase_idx": phase_idx,
                         "training_step": 1.0 if train else 0.0,
+                        **wb_cfg_diag,
                     },
                 )
                 global_step += 1
@@ -322,6 +410,7 @@ def main() -> int:
             epoch_row["epoch"] = float(epoch)
             epoch_row["phase_idx"] = phase_idx
             epoch_row["training_step"] = 1.0 if train else 0.0
+            epoch_row.update(wb_cfg_diag)
             if use_wandb:
                 import wandb
 

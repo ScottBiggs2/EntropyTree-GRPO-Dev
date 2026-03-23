@@ -328,6 +328,51 @@ class EntropyGuidedTreeBuilder:
         for child in node.children:
             self._fill_missing_entropy(child)
 
+    def generate_one_trajectory(
+        self, prompt: str
+    ) -> Tuple[str, List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]]:
+        """Generate one full completion without MCTS; record mask→token transitions for GRPO.
+
+        Uses the same iterative unmasking loop as ``_denoise_to_completion`` (Dream
+        adapter logits + ``sample_and_confidence``), not ``diffusion_generate``,
+        so training-time log-probs stay consistent with the tree stack.
+        """
+        root = self._create_root(prompt)
+        state = root.state.clone()
+        attn = root.attention_mask.clone()
+        prompt_len = root.prompt_len
+        max_new = self.config.max_new_tokens
+        response_region = torch.zeros_like(state, dtype=torch.bool, device=state.device)
+        response_region[prompt_len : prompt_len + max_new] = True
+        transitions: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
+        temperature = self.config.temperature
+
+        with torch.no_grad():
+            while True:
+                mask_now = (state == self.mask_id) & response_region
+                n_masked = int(mask_now.sum().item())
+                if n_masked == 0:
+                    break
+                k = min(n_masked, 64)
+                parent_state = state.clone()
+                parent_attn = attn.clone()
+                logits = self.adapter.forward_logits(
+                    state.unsqueeze(0), attn.unsqueeze(0)
+                )[0]
+                x0_pred, conf = self.adapter.sample_and_confidence(
+                    logits, mask_now, temperature, self.config.top_p
+                )
+                x0_pred = torch.where(mask_now, x0_pred, state)
+                _, sel = torch.topk(conf, k=k)
+                state[sel] = x0_pred[sel]
+                transitions.append((parent_state, state.clone(), parent_attn))
+
+        completion = self.tokenizer.decode(
+            state[prompt_len : prompt_len + max_new].tolist(),
+            skip_special_tokens=True,
+        )
+        return completion, transitions
+
     def _denoise_to_completion(self, node: MCTSNode) -> MCTSNode:
         """Run denoising until no masked tokens remain in response."""
         state = node.state.clone()

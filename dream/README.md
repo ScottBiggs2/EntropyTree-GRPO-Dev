@@ -59,7 +59,7 @@ dream/
 │   ├── validate_dream.py      # Phase 0: load Dream 7B, forward + entropy checks
 │   ├── validate_dream_tree.py # Small real tree (fixed or adaptive stepping; optional LoRA)
 │   ├── single_step_dream.py   # One training step (LoRA, adaptive flags, etc.)
-│   └── run_dream_comparison.py # WandB comparison arms (initial eval, baseline train, adaptive variants)
+│   └── run_dream_comparison.py # WandB arms: initial eval, MCTS-GRPO, flat LoRA / optional dense GRPO, adaptive
 └── tests/
     ├── __init__.py
     ├── test_entropy_corrected.py
@@ -119,14 +119,16 @@ pip install -r dream/requirements.txt
 | **5 — Tree + LoRA** (optional) | `python dream/scripts/validate_dream_tree.py --lora --lora-r 8 --lora-alpha 16` | `[LoRA] trainable params: …`, tree still builds | If `AttributeError: module 'torch.distributed' has no attribute 'tensor'`, upgrade PEFT: `pip install --upgrade 'peft>=0.18.0'` |  Looks good! |
 | **6 — One training step (~32GB)** | `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python dream/scripts/single_step_dream.py --lora --profile-memory --max-tree-nodes 5 --max-new-tokens 96 --steps-per-expansion 12` | prints `Metrics:` with finite `loss`; `n_loss_forwards` ≤ `n_transitions` | Good |
 | **7 — Training + adaptive** (optional) | `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python dream/scripts/single_step_dream.py --lora --profile-memory --max-tree-nodes 5 --max-new-tokens 96 --adaptive-stepping --branch-threshold 0.65 --min-steps-per-expansion 8 --max-steps-per-expansion 48` | completes; branching uses same config as `validate_dream_tree` | Good |
-| **8 — Light WandB comparison** | `export WANDB_API_KEY=...`; `sbatch run_dream_comparison.sh` (from repo root). Slurm writes **`dream_comparison_<jobid>.out`** in that directory (no `logs/` folder required). | One WandB **group** with four runs: `initial_eval` (no train, adaptive tree), `baseline_train` (fixed steps), `adaptive_default`, `adaptive_alt_hp` | Use for pipeline sanity + side-by-side curves |
+| **8 — Light WandB comparison** | `export WANDB_API_KEY=...`; `sbatch run_dream_comparison.sh` (from repo root). Slurm writes **`dream_comparison_<jobid>.out`** in that directory (no `logs/` folder required). | One WandB **group** with up to **six** runs: `initial_eval`, **`baseline_train`** (**MCTS / tree** GRPO — not “dense”), **`grpo_lora_baseline`** (flat GRPO + **LoRA**), optional **`grpo_dense_baseline`** (flat GRPO + **full fine-tune**), `adaptive_default`, `adaptive_alt_hp` | **Tree vs flat LoRA** vs **dense full-FT** isolates search vs adapter vs capacity |
 
 **Step 8 details (repo root):** `run_dream_comparison.sh` runs, in order:
 
 1. `python dream/scripts/run_dream_comparison.py --phase initial_eval ...` — **pre-train** metrics (`eval_step`, no optimizer).
-2. `--phase baseline_train` — **MCTS-GRPO with fixed** `steps_per_expansion` (`adaptive_stepping=False`).
-3. `--phase adaptive_default` — **adaptive stepping** + default `branch_threshold` / `alpha_entropy`.
-4. `--phase adaptive_alt_hp` — adaptive + **alternate** `alpha_entropy=1.0`, `branch_threshold=0.55` (smoke test that HP changes show up in WandB).
+2. `--phase baseline_train` — **MCTS / tree** GRPO with fixed `steps_per_expansion` (`adaptive_stepping=False`). This is **not** dense or flat GRPO — it always builds a search tree.
+3. `--phase grpo_lora_baseline` — **flat trajectory GRPO** (no tree); **LoRA** matches `--lora-r` / `--lora-alpha` / `--lora` like the MCTS arms. Override K with `--num-baseline-samples` or **`NUM_BASELINE_SAMPLES`**.
+4. **`grpo_dense_baseline`** (optional in shell) — **flat trajectory GRPO, full model fine-tune** (no LoRA; the script **ignores `--lora`** for this phase). Enable with **`RUN_GRPO_DENSE_BASELINE=1`** before `sbatch` — needs a **large GPU** (often ~80GB class for 7B + grads).
+5. `--phase adaptive_default` — **adaptive stepping** + default `branch_threshold` / `alpha_entropy`.
+6. `--phase adaptive_alt_hp` — adaptive + **alternate** `alpha_entropy=1.0`, `branch_threshold=0.55` (smoke test that HP changes show up in WandB).
 
 **WandB layout:** metrics are logged with **shared names** across arms (`loss`, `avg_reward`, `wall_sec_step`, `epoch_mean_*`, …), similar to `scripts/run_experiment_2.py`, so in the UI you can select the whole **group** and compare runs on the **same charts**. Per-step logs include all numeric trainer fields; job logs print the full metric line. Default prompt list has **10** short code tasks; override with `--prompts_file`. Use `--wandb_prefixed_keys` if you prefer separate `phase/metric` charts.
 
@@ -135,6 +137,8 @@ Shared flags: `--wandb_group` (script sets to `dream_cmp_$SLURM_JOB_ID`), `--run
 **Slurm / conda:** `run_dream_comparison.sh` uses the **same conda pattern as `run_experiment_2.sh`**: source `$HOME/miniconda/etc/profile.d/conda.sh` (then `miniconda3`, then `anaconda3`), then **`conda activate EntropyTreeGRPO_Dream_env`**. Your `conda info --base` is often **`~/miniconda`**, not `~/miniconda3` — that path is checked first. Then **`python -m pip install -r dream/requirements.txt`**. If you see `torchvision::nms` or Python **3.13**, the wrong interpreter was used.
 
 **Memory (OOM):** Training uses far more VRAM than `initial_eval` (no backward). If **`CUDA out of memory`** appears on the **second** prompt, the first `train_step` filled the GPU; the script now runs **`gc` + `torch.cuda.empty_cache()`** between training steps, and defaults use **`MAX_NEW_TOKENS=96`**, **`MAX_TREE_NODES=8`**, **`BRANCH_WIDTH=2`**. If WandB shows **only one step** for a training phase, check **`dream_comparison_<jobid>.err`** for OOM — then lower tree limits or `NUM_EPOCHS` / raise GPU memory.
+
+**W&B metrics (flat lines, identical `n_loss_forwards`, etc.):** See **`dream/docs/WANDB_METRICS.md`**. Short version: `mean_w_time` / `mean_w_ent` are **raw** weights ( **`alpha` does not scale them in the log** ); `mean_weight` uses \(\alpha_{\text{time}}\) and \(\alpha_{\text{entropy}}\). `entropy_weight_min` (default 0.5) **clamps** many edges so `mean_w_ent` often sits at ~0.5. `phase_idx` is **arm id**, not time. **`cfg_*` scalars** are logged each step for verification.
 
 **Adaptive stepping sanity:** `H/log(V)` is usually **≤ 1**; a threshold **> 1** (e.g. the old `1.1` default) **never** early-stops on that test. If step 4 shows identical `steps_in_edge`, try lowering `--branch-threshold` (e.g. `0.5`) or widening `[min,max]`; see `DEVELOPMENT_PLAN.md` Appendix C.
 
