@@ -21,7 +21,7 @@
 
 # Job runs in the directory you submitted from (SLURM_SUBMIT_DIR)
 cd "${SLURM_SUBMIT_DIR:-.}"
-mkdir -p logs checkpoints
+mkdir -p logs
 
 echo "Job started at: $(date)"
 echo "Running on node: $(hostname)"
@@ -80,6 +80,9 @@ LEARNING_RATE="${LEARNING_RATE:-5e-6}"
 # Low floor ⇒ fewer transitions floored (see dream/docs/WANDB_METRICS.md, frac_entropy_clamped_*)
 ENTROPY_WEIGHT_MIN="${ENTROPY_WEIGHT_MIN:-0.08}"
 ENTROPY_WEIGHT_MAX="${ENTROPY_WEIGHT_MAX:-2.5}"
+# Checkpoints: off by default (W&B only). Set SAVE_CHECKPOINTS=1 to write under CHECKPOINT_DIR (scratch).
+SAVE_CHECKPOINTS="${SAVE_CHECKPOINTS:-0}"
+CHECKPOINT_DIR="${CHECKPOINT_DIR:-/scratch/biggs.s/entropy_tree_grpo_dream}"
 SAVE_EVERY="${SAVE_EVERY:-0}"
 NUM_BASELINE_SAMPLES="${NUM_BASELINE_SAMPLES:-4}"
 # Full fine-tune flat GRPO (no LoRA) — VRAM-heavy (~80GB class for 7B). 0 = skip this arm.
@@ -101,11 +104,18 @@ COMMON=(
   --entropy-weight-min "$ENTROPY_WEIGHT_MIN"
   --entropy-weight-max "$ENTROPY_WEIGHT_MAX"
   --learning_rate "$LEARNING_RATE"
-  --checkpoint_dir "$(pwd)/checkpoints"
-  --save_every_steps "$SAVE_EVERY"
+  --checkpoint-dir "$CHECKPOINT_DIR"
   --num-baseline-samples "$NUM_BASELINE_SAMPLES"
   --lora
 )
+
+if [ "$SAVE_CHECKPOINTS" = "1" ]; then
+  mkdir -p "$CHECKPOINT_DIR" || {
+    echo "ERROR: cannot create checkpoint dir $CHECKPOINT_DIR"
+    exit 1
+  }
+  COMMON+=(--save-checkpoints --save_every_steps "$SAVE_EVERY")
+fi
 
 echo "================================"
 echo "1/6 initial_eval (no training; adaptive tree)"
@@ -146,7 +156,11 @@ python dream/scripts/run_dream_comparison.py --phase adaptive_alt_hp "${COMMON[@
 echo "================================"
 echo "Job finished at: $(date)"
 echo "WandB group: $GROUP  project: $WANDB_PROJECT"
-echo "Checkpoints: $(pwd)/checkpoints/dream_comparison/$RUN_NAME"
+if [ "$SAVE_CHECKPOINTS" = "1" ]; then
+  echo "Checkpoints: $CHECKPOINT_DIR/dream_comparison/$RUN_NAME"
+else
+  echo "Checkpoints: disabled (export SAVE_CHECKPOINTS=1 to save under $CHECKPOINT_DIR)"
+fi
 echo "Slurm stdout/stderr (this job): $(pwd)/dream_comparison_${SLURM_JOB_ID:-local}.out  .err"
 if [ -n "${SLURM_JOB_ID:-}" ] && [ -f "dream_comparison_${SLURM_JOB_ID}.out" ]; then
   cp -f "dream_comparison_${SLURM_JOB_ID}.out" "logs/dream_comparison_${SLURM_JOB_ID}.out" 2>/dev/null || true

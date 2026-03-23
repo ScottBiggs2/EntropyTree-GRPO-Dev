@@ -58,6 +58,9 @@ _configure_hf_cache()
 
 import torch
 
+# Cluster scratch (not repo disk). Used when --save-checkpoints is set.
+DEFAULT_CHECKPOINT_ROOT = "/scratch/biggs.s/entropy_tree_grpo_dream"
+
 from dream.src.config import MCTSConfig
 from dream.src.rewards import SyntaxReward
 from dream.src.trainer import BaselineGRPOTrainer, EntropyMCTSTrainer
@@ -172,8 +175,28 @@ def main() -> int:
         default=2.5,
         help="Clamp ceiling for loss entropy weight.",
     )
-    p.add_argument("--checkpoint_dir", type=str, default="checkpoints")
-    p.add_argument("--save_every_steps", type=int, default=0, help="0 = no checkpoints")
+    p.add_argument(
+        "--save-checkpoints",
+        "--save_checkpoints",
+        action="store_true",
+        help="If set, write final (and optional periodic) checkpoints under --checkpoint-dir. "
+        "Default: no checkpoint files (W&B metrics only).",
+    )
+    p.add_argument(
+        "--checkpoint-dir",
+        "--checkpoint_dir",
+        type=str,
+        default=DEFAULT_CHECKPOINT_ROOT,
+        help=f"Root directory for dream_comparison/<run_name>/ (default: {DEFAULT_CHECKPOINT_ROOT}).",
+    )
+    p.add_argument(
+        "--save-every-steps",
+        "--save_every_steps",
+        type=int,
+        default=0,
+        dest="save_every_steps",
+        help="With --save-checkpoints: also save every N global steps (0 = only final.pt per phase).",
+    )
     p.add_argument(
         "--wandb_prefixed_keys",
         action="store_true",
@@ -258,6 +281,18 @@ def main() -> int:
         print(
             "[dream_cmp] NOTE: baseline_train is **MCTS (tree)** GRPO, not flat/dense GRPO."
         )
+    if args.save_checkpoints:
+        periodic = (
+            f", also every {args.save_every_steps} global steps"
+            if args.save_every_steps > 0
+            else " (final .pt per phase only)"
+        )
+        print(
+            f"[dream_cmp] checkpoints: saving under "
+            f"{args.checkpoint_dir}/dream_comparison/{args.run_name}{periodic}"
+        )
+    else:
+        print("[dream_cmp] checkpoints: disabled (default; no .pt files)")
 
     # Init W&B before model load so a failed load still creates a run (config visible in UI).
     use_wandb = not args.no_wandb
@@ -392,8 +427,13 @@ def main() -> int:
                 if train:
                     _cuda_relax_after_train_step()
 
-                if train and args.save_every_steps > 0 and global_step % args.save_every_steps == 0:
-                    save_dir = Path(cfg.checkpoint_dir) / "dream_comparison" / args.run_name
+                if (
+                    train
+                    and args.save_checkpoints
+                    and args.save_every_steps > 0
+                    and global_step % args.save_every_steps == 0
+                ):
+                    save_dir = Path(args.checkpoint_dir) / "dream_comparison" / args.run_name
                     save_dir.mkdir(parents=True, exist_ok=True)
                     ckpt = save_dir / f"{args.phase}_step_{global_step}.pt"
                     torch.save(
@@ -429,8 +469,8 @@ def main() -> int:
 
             print(f"[dream_cmp] epoch {epoch} mean metrics: {epoch_means}")
 
-        if train:
-            save_dir = Path(cfg.checkpoint_dir) / "dream_comparison" / args.run_name
+        if train and args.save_checkpoints:
+            save_dir = Path(args.checkpoint_dir) / "dream_comparison" / args.run_name
             save_dir.mkdir(parents=True, exist_ok=True)
             final = save_dir / f"{args.phase}_final.pt"
             torch.save(
