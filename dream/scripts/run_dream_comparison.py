@@ -136,7 +136,12 @@ def main() -> int:
     p.add_argument("--wandb_project", type=str, default="entropy-tree-grpo-dream")
     p.add_argument("--wandb_group", type=str, default="", help="WandB group id (e.g. SLURM_JOB_ID)")
     p.add_argument("--no_wandb", action="store_true")
-    p.add_argument("--num_epochs", type=int, default=3)
+    p.add_argument(
+        "--num_epochs",
+        type=int,
+        default=6,
+        help="Epochs per phase (default 6; use shell NUM_EPOCHS for long runs).",
+    )
     p.add_argument("--prompts_file", type=str, default="")
     p.add_argument("--max_tree_nodes", type=int, default=8)
     p.add_argument("--branch_width", type=int, default=2)
@@ -158,13 +163,13 @@ def main() -> int:
     p.add_argument(
         "--entropy-weight-min",
         type=float,
-        default=0.2,
-        help="Clamp floor for loss entropy weight (default 0.2; was 0.5 in MCTSConfig — many edges hit the floor).",
+        default=0.08,
+        help="Clamp floor for loss entropy weight (default 0.08; lower ⇒ fewer edges floored, stronger entropy signal).",
     )
     p.add_argument(
         "--entropy-weight-max",
         type=float,
-        default=2.0,
+        default=2.5,
         help="Clamp ceiling for loss entropy weight.",
     )
     p.add_argument("--checkpoint_dir", type=str, default="checkpoints")

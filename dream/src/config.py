@@ -45,9 +45,10 @@ class MCTSConfig:
     # --- Loss weighting (D-010) ---
     alpha_time: float = 1.0
     alpha_entropy: float = 0.5
-    # Stability clamps (D-014)
-    entropy_weight_min: float = 0.5
-    entropy_weight_max: float = 2.0
+    # Stability clamps (D-014). Low raw entropy weights are common; a floor that
+    # is too high pins most edges (high frac_entropy_clamped_low) and flattens learning.
+    entropy_weight_min: float = 0.08
+    entropy_weight_max: float = 2.5
     advantage_clip: float = 2.0
 
     # --- Entropy normalization convention (D-017) ---

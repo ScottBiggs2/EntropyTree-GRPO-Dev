@@ -4,7 +4,7 @@ This note explains **loss-side** scalars from `WeightedGRPOLoss` and **run metad
 
 ## 1. `phase_idx` does not vary over training (by design)
 
-`phase_idx` is **0–3** for `initial_eval` … `adaptive_alt_hp`. It labels **which arm** this W&B run is, not time. It is **constant within a run** and **should not** be used as an x-axis for learning curves. Use **`global_step`** / step index, or compare **separate runs** in a group.
+`phase_idx` indexes `PHASE_ORDER` in `run_dream_comparison.py` (which arm this run is), not time. It is **constant within a run** and **should not** be used as an x-axis for learning curves. Use **`global_step`** / step index, or compare **separate runs** in a group.
 
 ## 2. `mean_w_time` and `mean_w_ent` are **raw** weights (before `alpha_*`)
 
@@ -17,7 +17,7 @@ w = \alpha_{\text{time}} \cdot w_{\text{time}} + \alpha_{\text{entropy}} \cdot w
 Logged **means**:
 
 - **`mean_w_time`**: average of **`w_time`** = interval time weight from `TimeWeighter.get_interval_weight(parent_step, child_step)` (depends only on **tree topology** and `total_denoising_steps`, not on `alpha_entropy`).
-- **`mean_w_ent`**: average of **`w_ent`** = entropy weight from `EntropyComputer.compute_entropy_weight`, then **clamped** to `[entropy_weight_min, entropy_weight_max]` (global `MCTSConfig` defaults **0.5–2.0**; `run_dream_comparison.py` defaults **0.2–2.0** unless overridden).
+- **`mean_w_ent`**: average of **`w_ent`** = entropy weight from `EntropyComputer.compute_entropy_weight`, then **clamped** to `[entropy_weight_min, entropy_weight_max]` (global `MCTSConfig` defaults **0.08–2.5**; `run_dream_comparison.py` / shell match unless overridden).
 
 Changing **`alpha_entropy`** between `adaptive_default` and `adaptive_alt_hp` **does not change** `mean_w_time` or `mean_w_ent` — those are **pre-alpha** building blocks. What **should** change between those arms is **`mean_weight`** (average of \(w\)) and the **loss**.
 
@@ -27,15 +27,15 @@ So: **identical `mean_w_time` / `mean_w_ent` across hyperparams that only change
 
 We cannot see your runs without logging in. Export a **CSV** or paste **scalar names + a few values** if you want help interpreting a specific chart.
 
-## 3. Why `mean_w_ent` often looks constant (~0.5)
+## 3. Why `mean_w_ent` often looks constant (near the floor)
 
 `entropy_weight` is computed from normalized entropy, then:
 
 ```text
-ew = clamp(ew_raw, entropy_weight_min, entropy_weight_max)   # default min=0.5, max=2.0
+ew = clamp(ew_raw, entropy_weight_min, entropy_weight_max)   # e.g. min=0.08, max=2.5
 ```
 
-If many nodes have **low** \(H/\log V\), **`ew_raw` is below 0.5** and the **clamp pins `w_ent` to 0.5** on those edges. Averaging then yields **`mean_w_ent` stuck near `entropy_weight_min`** — a **stability** choice that **reduces variance** in the weight but can **flatten** the metric in W&B.
+If many edges have **low** raw weight, **`ew_raw` is below `entropy_weight_min`** and the **clamp pins `w_ent` to the floor** on those edges. Averaging then yields **`mean_w_ent` stuck near `entropy_weight_min`** — tight floors **reduce variance** but can **flatten** learning signal when **`frac_entropy_clamped_low` is high** (e.g. >0.5).
 
 **Implemented diagnostics** (logged every train step from `WeightedGRPOLoss`):
 
@@ -44,7 +44,14 @@ If many nodes have **low** \(H/\log V\), **`ew_raw` is below 0.5** and the **cla
 - **`frac_entropy_clamped_high`**: fraction hitting the ceiling.
 - **`mean_edge_denoising_delta`**: mean `child_step_index - step_index` per edge — if **constant** across steps, **`mean_w_time`** often is too (same interval schedule on every edge).
 
-The comparison script defaults to **`--entropy-weight-min 0.2`** (not 0.5) so fewer edges sit on the floor; tighten again if training becomes unstable.
+The comparison script defaults to **`--entropy-weight-min 0.08`** (and **`max` 2.5**) so fewer transitions hit the floor; **raise** the floor slightly if gradients become unstable.
+
+## 3a. Reward diagnostics (trainer)
+
+Every step also logs:
+
+- **`mean_reward`** (same value as **`avg_reward`**) — mean reward over tree leaves or baseline trajectories.
+- **`min_reward`** / **`max_reward`** — spread across leaves/samples; large `max_reward - min_reward` with flat loss can indicate reward scale or advantage issues.
 
 ## 3b. “Cyclic” `avg_entropy` over training
 

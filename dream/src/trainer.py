@@ -108,6 +108,8 @@ class BaselineGRPOTrainer:
             return {
                 "loss": 0.0,
                 "avg_reward": 0.0,
+                "mean_reward": 0.0,
+                "min_reward": 0.0,
                 "max_reward": 0.0,
                 "tree_nodes": 0.0,
                 "tree_leaves": float(K),
@@ -136,9 +138,12 @@ class BaselineGRPOTrainer:
             self.scheduler.step()
 
         lr = self.optimizer.param_groups[0]["lr"]
+        min_r = min(rewards) if rewards else 0.0
         return {
             "loss": float(loss.item()),
             "avg_reward": mean_reward,
+            "mean_reward": mean_reward,
+            "min_reward": min_r,
             "max_reward": max(rewards) if rewards else 0.0,
             "tree_nodes": 0.0,
             "tree_leaves": float(K),
@@ -203,6 +208,8 @@ class EntropyMCTSTrainer:
             return {
                 "loss": 0.0,
                 "avg_reward": 0.0,
+                "mean_reward": 0.0,
+                "min_reward": 0.0,
                 "max_reward": 0.0,
                 "tree_nodes": 1.0,
                 "tree_leaves": 0.0,
@@ -226,6 +233,7 @@ class EntropyMCTSTrainer:
             return 1 + sum(count_nodes(c) for c in n.children)
 
         avg_reward = sum(rewards) / len(rewards) if rewards else 0.0
+        min_reward = min(rewards) if rewards else 0.0
         max_reward = max(rewards) if rewards else 0.0
         entropies = [n.entropy for n in [root] + leaves if n.entropy is not None]
         avg_entropy = sum(entropies) / len(entropies) if entropies else 0.0
@@ -233,6 +241,8 @@ class EntropyMCTSTrainer:
         return {
             "loss": 0.0,
             "avg_reward": avg_reward,
+            "mean_reward": avg_reward,
+            "min_reward": min_reward,
             "max_reward": max_reward,
             "tree_nodes": float(count_nodes(root)),
             "tree_leaves": float(len(leaves)),
@@ -249,6 +259,8 @@ class EntropyMCTSTrainer:
             return {
                 "loss": 0.0,
                 "avg_reward": 0.0,
+                "mean_reward": 0.0,
+                "min_reward": 0.0,
                 "max_reward": 0.0,
                 "tree_nodes": 1,
                 "tree_leaves": 0,
@@ -310,6 +322,7 @@ class EntropyMCTSTrainer:
             return 1 + sum(count_nodes(c) for c in n.children)
 
         avg_reward = sum(rewards) / len(rewards) if rewards else 0.0
+        min_reward = min(rewards) if rewards else 0.0
         max_reward = max(rewards) if rewards else 0.0
         entropies = [n.entropy for n in [root] + leaves if n.entropy is not None]
         avg_entropy = sum(entropies) / len(entropies) if entropies else 0.0
@@ -318,6 +331,8 @@ class EntropyMCTSTrainer:
         metrics: Dict[str, float] = {
             "loss": float(loss.item()),
             "avg_reward": avg_reward,
+            "mean_reward": avg_reward,
+            "min_reward": min_reward,
             "max_reward": max_reward,
             "tree_nodes": float(count_nodes(root)),
             "tree_leaves": float(len(leaves)),

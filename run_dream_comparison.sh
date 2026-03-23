@@ -17,7 +17,7 @@
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:a100:1
 #SBATCH --mem=64G
-#SBATCH --time=04:00:00
+#SBATCH --time=6:00:00
 
 # Job runs in the directory you submitted from (SLURM_SUBMIT_DIR)
 cd "${SLURM_SUBMIT_DIR:-.}"
@@ -67,19 +67,19 @@ GROUP="$RUN_NAME"
 WANDB_PROJECT="${WANDB_PROJECT:-entropy-tree-grpo-dream}"
 
 # Defaults sized for ~80GB A100 + Dream 7B LoRA + MCTS (OOM on 2nd step if too large).
-# Increase NUM_EPOCHS / tree after a successful dry run (export VAR=... before sbatch).
-NUM_EPOCHS="${NUM_EPOCHS:-12}"
+# Override before sbatch: NUM_EPOCHS, ENTROPY_WEIGHT_MIN, MAX_TREE_NODES, etc.
+NUM_EPOCHS="${NUM_EPOCHS:-32}"
 MAX_TREE_NODES="${MAX_TREE_NODES:-8}"
 BRANCH_WIDTH="${BRANCH_WIDTH:-2}"
 STEPS_PER_EXPANSION="${STEPS_PER_EXPANSION:-12}"
-MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-96}"
+MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-256}"
 MIN_ADAPT="${MIN_ADAPT:-4}"
 MAX_ADAPT="${MAX_ADAPT:-36}"
-BRANCH_THRESHOLD="${BRANCH_THRESHOLD:-0.65}"
+BRANCH_THRESHOLD="${BRANCH_THRESHOLD:-0.75}"
 LEARNING_RATE="${LEARNING_RATE:-5e-6}"
-# Loosen from 0.5 default so mean_w_ent is not always pinned at the floor (see dream/docs/WANDB_METRICS.md)
-ENTROPY_WEIGHT_MIN="${ENTROPY_WEIGHT_MIN:-0.2}"
-ENTROPY_WEIGHT_MAX="${ENTROPY_WEIGHT_MAX:-2.0}"
+# Low floor ⇒ fewer transitions floored (see dream/docs/WANDB_METRICS.md, frac_entropy_clamped_*)
+ENTROPY_WEIGHT_MIN="${ENTROPY_WEIGHT_MIN:-0.08}"
+ENTROPY_WEIGHT_MAX="${ENTROPY_WEIGHT_MAX:-2.5}"
 SAVE_EVERY="${SAVE_EVERY:-0}"
 NUM_BASELINE_SAMPLES="${NUM_BASELINE_SAMPLES:-4}"
 # Full fine-tune flat GRPO (no LoRA) — VRAM-heavy (~80GB class for 7B). 0 = skip this arm.
