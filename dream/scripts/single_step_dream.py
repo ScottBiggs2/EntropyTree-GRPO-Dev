@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Run a single Dream 7B training step (entropy-MCTS-GRPO) on a code prompt.
+Run a single Dream 7B training step (entropy-MCTS-GRPO) on a code prompt or task dataset.
 
 Use after validate_dream.py. Runs one tree build + advantage + loss + backward + step.
-Uses SyntaxReward for quick iteration; switch to ExecutionLiteReward for real code RL.
+Supports syntax-only smoke tests or dataset-backed execution rewards for real code RL.
 
 Usage (from repo root):
   python dream/scripts/single_step_dream.py [--prompt "your prompt"]
@@ -45,8 +45,9 @@ _configure_hf_cache()
 import torch
 
 from dream.src.config import MCTSConfig
+from dream.src.rewards import build_reward_function
+from dream.src.task_registry import filter_code_tasks, infer_default_split, load_code_tasks
 from dream.src.utils import load_model_and_tokenizer
-from dream.src.rewards import SyntaxReward
 from dream.src.trainer import EntropyMCTSTrainer
 
 
@@ -56,7 +57,38 @@ def main():
         "--prompt",
         type=str,
         default="Write a Python function to check if a number is prime.",
-        help="Code generation prompt",
+        help="Code generation prompt (ignored if --dataset is provided unless --task-index is invalid)",
+    )
+    p.add_argument(
+        "--dataset",
+        type=str,
+        default="",
+        help="Task dataset path (.jsonl preferred; .json legacy execution-lite supported).",
+    )
+    p.add_argument(
+        "--dataset-split",
+        type=str,
+        default="",
+        help="Task split to use (train/dev/all). Default: inferred from phase/context.",
+    )
+    p.add_argument(
+        "--task-index",
+        type=int,
+        default=0,
+        help="Index within the selected dataset split (default 0).",
+    )
+    p.add_argument(
+        "--reward",
+        type=str,
+        default="syntax",
+        choices=("syntax", "code_format", "execution", "execution_shaped", "execution_lite"),
+        help="Reward function to use.",
+    )
+    p.add_argument(
+        "--reward-timeout",
+        type=float,
+        default=2.0,
+        help="Timeout in seconds for execution-backed rewards.",
     )
     p.add_argument(
         "--model",
@@ -165,6 +197,29 @@ def main():
         min_steps_per_expansion=args.min_steps_per_expansion,
         max_steps_per_expansion=args.max_steps_per_expansion,
     )
+
+    selected_prompt = args.prompt
+    dataset_meta = None
+    if args.dataset:
+        tasks = load_code_tasks(args.dataset)
+        chosen_split = args.dataset_split or infer_default_split(tasks, "baseline_train")
+        tasks = filter_code_tasks(tasks, chosen_split)
+        if not tasks:
+            raise ValueError(f"No tasks found for split={chosen_split!r} in dataset {args.dataset}")
+        if args.task_index < 0 or args.task_index >= len(tasks):
+            raise IndexError(
+                f"task-index {args.task_index} out of range for split={chosen_split!r} "
+                f"(n_tasks={len(tasks)})"
+            )
+        task = tasks[args.task_index]
+        selected_prompt = task.canonical_prompt
+        dataset_meta = {
+            "dataset": args.dataset,
+            "split": chosen_split,
+            "task_id": task.task_id,
+            "entry_point": task.entry_point,
+        }
+
     model, tokenizer = load_model_and_tokenizer(cfg)
     if getattr(cfg, "gradient_checkpointing", False) and hasattr(
         model, "gradient_checkpointing_enable"
@@ -176,13 +231,21 @@ def main():
         optimizer = torch.optim.SGD(model.parameters(), lr=cfg.learning_rate)
     else:
         optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate)
-    reward_fn = SyntaxReward()
+    reward_fn = build_reward_function(
+        args.reward,
+        registry_path=args.dataset or None,
+        timeout=args.reward_timeout,
+        project_root=_repo_root,
+    )
     trainer = EntropyMCTSTrainer(model, tokenizer, cfg, reward_fn, optimizer)
 
+    if dataset_meta is not None:
+        print(f"[single_step] dataset task: {dataset_meta}")
+    print(f"[single_step] reward={args.reward} device={device} lora={args.lora}")
     print("Running one train_step...")
     if args.profile_memory and device == "cuda":
         torch.cuda.reset_peak_memory_stats()
-    metrics = trainer.train_step(args.prompt)
+    metrics = trainer.train_step(selected_prompt)
     print("Metrics:", metrics)
     if args.profile_memory and device == "cuda":
         peak = torch.cuda.max_memory_allocated() / 1e9

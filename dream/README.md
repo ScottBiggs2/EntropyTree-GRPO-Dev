@@ -41,6 +41,7 @@ srun --partition=gpu --nodes=1 --pty --gres=gpu:1 --ntasks=1 --mem=32GB --time=1
 ```text
 dream/
 ├── DEVELOPMENT_PLAN.md   # Detailed step-by-step migration plan
+├── STATUS.md             # What is implemented vs what still needs GPU/eval work
 ├── README.md             # This file
 ├── src/
 │   ├── __init__.py
@@ -52,13 +53,20 @@ dream/
 │   ├── tree_builder.py   # Entropy-guided tree, optional adaptive stepping
 │   ├── advantages.py     # BranchGRPO-style advantage computation
 │   ├── loss.py           # Corrected weighted GRPO loss
-│   ├── rewards.py        # Syntax / execution-lite / judge placeholder
+│   ├── rewards.py        # Syntax / execution / execution-shaped / judge placeholder
+│   ├── formatting.py     # Prompt formatting + code extraction
+│   ├── task_registry.py  # Task schema + legacy execution-lite compatibility
 │   ├── trainer.py        # Minimal EntropyMCTSTrainer (one-step loop)
 │   └── utils.py          # Device, model loading, LR scheduler
+├── data/
+│   ├── README.md
+│   ├── code_grpo_train.sample.jsonl
+│   └── code_grpo_dev.sample.jsonl
 ├── scripts/
 │   ├── validate_dream.py      # Phase 0: load Dream 7B, forward + entropy checks
 │   ├── validate_dream_tree.py # Small real tree (fixed or adaptive stepping; optional LoRA)
 │   ├── single_step_dream.py   # One training step (LoRA, adaptive flags, etc.)
+│   ├── check_reward_pipeline.py # Task/reward smoke test (no Dream weights)
 │   └── run_dream_comparison.py # WandB arms: initial eval, MCTS-GRPO, flat LoRA / optional dense GRPO, adaptive
 └── tests/
     ├── __init__.py
@@ -95,6 +103,12 @@ This validates:
 - interval-aware time weighting
 - basic ModelAdapter behavior for MDLM-style mocks
 - minimal `EntropyMCTSTrainer` wiring with a tiny mock model
+- code-task schema and dataset loading
+- prompt formatting and code extraction
+- execution-backed reward plumbing
+
+For a concise running summary of what is implemented and what still needs GPU work,
+see `dream/STATUS.md`.
 
 You can freely extend the Dream stack in `dream/src/` following the
 guidelines in `DEVELOPMENT_PLAN.md` without touching the original `src/`
@@ -113,11 +127,12 @@ pip install -r dream/requirements.txt
 | Step | Command | What “good” looks like | Status |
 |------|---------|------------------------|--------|
 | **1 — Unit tests** (no GPU) | `python -m pytest dream/tests -q` | All pass | All pass! |
+| **1b — Reward pipeline** (no Dream weights) | `python dream/scripts/check_reward_pipeline.py --dataset dream/data/code_grpo_train.sample.jsonl --reward execution_shaped --max-tasks 3` | known-good completions outscore bad completion | New |
 | **2 — Phase 0: load + logits** | `python dream/scripts/validate_dream.py` | Model loads, entropy in `[0, log(V)]`, no device errors | Looks great! |
 | **3 — Tree, fixed stepping** | `python dream/scripts/validate_dream_tree.py --max-tree-nodes 5 --branch-width 2 --steps-per-expansion 16 --max-new-tokens 128` | `Tree summary`, `Entropy summary`, `leaves >= 1` | All looks good! |
 | **4 — Tree, adaptive stepping** | `python dream/scripts/validate_dream_tree.py --adaptive-stepping --branch-threshold 0.65 --min-steps-per-expansion 8 --max-steps-per-expansion 48 --max-tree-nodes 5 --branch-width 2 --max-new-tokens 128` | Same as above **plus** `steps_in_edge` line with **unique** values (not always identical) when adaptive triggers | Working. Smart threshold next?|
 | **5 — Tree + LoRA** (optional) | `python dream/scripts/validate_dream_tree.py --lora --lora-r 8 --lora-alpha 16` | `[LoRA] trainable params: …`, tree still builds | If `AttributeError: module 'torch.distributed' has no attribute 'tensor'`, upgrade PEFT: `pip install --upgrade 'peft>=0.18.0'` |  Looks good! |
-| **6 — One training step (~32GB)** | `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python dream/scripts/single_step_dream.py --lora --profile-memory --max-tree-nodes 5 --max-new-tokens 96 --steps-per-expansion 12` | prints `Metrics:` with finite `loss`; `n_loss_forwards` ≤ `n_transitions` | Good |
+| **6 — One training step (~32GB)** | `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python dream/scripts/single_step_dream.py --lora --profile-memory --dataset dream/data/code_grpo_train.sample.jsonl --dataset-split train --task-index 0 --reward execution_shaped --max-tree-nodes 5 --max-new-tokens 96 --steps-per-expansion 12` | prints selected dataset task and finite `Metrics:`; `n_loss_forwards` ≤ `n_transitions` | New recommended path |
 | **7 — Training + adaptive** (optional) | `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python dream/scripts/single_step_dream.py --lora --profile-memory --max-tree-nodes 5 --max-new-tokens 96 --adaptive-stepping --branch-threshold 0.65 --min-steps-per-expansion 8 --max-steps-per-expansion 48` | completes; branching uses same config as `validate_dream_tree` | Good |
 | **8 — Light WandB comparison** | `export WANDB_API_KEY=...`; `sbatch run_dream_comparison.sh` (from repo root). Slurm writes **`dream_comparison_<jobid>.out`** in that directory (no `logs/` folder required). | One WandB **group** with up to **six** runs: `initial_eval`, **`baseline_train`** (**MCTS / tree** GRPO — not “dense”), **`grpo_lora_baseline`** (flat GRPO + **LoRA**), optional **`grpo_dense_baseline`** (flat GRPO + **full fine-tune**), `adaptive_default`, `adaptive_alt_hp` | **Tree vs flat LoRA** vs **dense full-FT** isolates search vs adapter vs capacity |
 
@@ -132,7 +147,7 @@ pip install -r dream/requirements.txt
 
 **WandB layout:** metrics are logged with **shared names** across arms (`loss`, `avg_reward`, `wall_sec_step`, `epoch_mean_*`, …), similar to `scripts/run_experiment_2.py`, so in the UI you can select the whole **group** and compare runs on the **same charts**. Per-step logs include all numeric trainer fields; job logs print the full metric line. Default prompt list has **10** short code tasks; override with `--prompts_file`. Use `--wandb_prefixed_keys` if you prefer separate `phase/metric` charts.
 
-Shared flags: `--wandb_group` (script sets to `dream_cmp_$SLURM_JOB_ID`), `--run_name`, `--lora`, tree limits. **Checkpoints are off by default** (W&B metrics only). To save `.pt` files, pass **`--save-checkpoints`** and optionally **`--checkpoint-dir`** (Slurm: `SAVE_CHECKPOINTS=1`, default root **`/scratch/biggs.s/entropy_tree_grpo_dream`**, override with `CHECKPOINT_DIR`). Periodic saves: `SAVE_EVERY` / `--save-every-steps`. Override budget via env vars (`NUM_EPOCHS`, `MAX_TREE_NODES`, …). Dry run without WandB: add `--no_wandb` to each Python invocation (edit script or call Python directly).
+Shared flags: `--wandb_group` (script sets to `dream_cmp_$SLURM_JOB_ID`), `--run_name`, `--lora`, tree limits, `--dataset`, `--dataset-split`, and `--reward`. In the Slurm wrapper, set `DATASET=...`, `DATASET_SPLIT=...`, `REWARD=execution_shaped` as needed. **Checkpoints are off by default** (W&B metrics only). To save `.pt` files, pass **`--save-checkpoints`** and optionally **`--checkpoint-dir`** (Slurm: `SAVE_CHECKPOINTS=1`, default root **`/scratch/biggs.s/entropy_tree_grpo_dream`**, override with `CHECKPOINT_DIR`). Periodic saves: `SAVE_EVERY` / `--save-every-steps`. Override budget via env vars (`NUM_EPOCHS`, `MAX_TREE_NODES`, …). Dry run without WandB: add `--no_wandb` to each Python invocation (edit script or call Python directly).
 
 **Slurm / conda:** `run_dream_comparison.sh` uses the **same conda pattern as `run_experiment_2.sh`**: source `$HOME/miniconda/etc/profile.d/conda.sh` (then `miniconda3`, then `anaconda3`), then **`conda activate EntropyTreeGRPO_Dream_env`**. Your `conda info --base` is often **`~/miniconda`**, not `~/miniconda3` — that path is checked first. Then **`python -m pip install -r dream/requirements.txt`**. If you see `torchvision::nms` or Python **3.13**, the wrong interpreter was used.
 
@@ -141,6 +156,70 @@ Shared flags: `--wandb_group` (script sets to `dream_cmp_$SLURM_JOB_ID`), `--run
 **W&B metrics (flat lines, identical `n_loss_forwards`, etc.):** See **`dream/docs/WANDB_METRICS.md`**. Short version: `mean_w_time` / `mean_w_ent` are **raw** weights ( **`alpha` does not scale them in the log** ); `mean_weight` uses \(\alpha_{\text{time}}\) and \(\alpha_{\text{entropy}}\). `entropy_weight_min` (default **0.08** in comparison runs) **clamps** low-entropy edges; watch **`frac_entropy_clamped_low`**. **`mean_reward`**, **`min_reward`**, **`max_reward`** summarize reward spread. `phase_idx` is **arm id**, not time. **`cfg_*` scalars** are logged each step for verification.
 
 **Adaptive stepping sanity:** `H/log(V)` is usually **≤ 1**; a threshold **> 1** (e.g. the old `1.1` default) **never** early-stops on that test. If step 4 shows identical `steps_in_edge`, try lowering `--branch-threshold` (e.g. `0.5`) or widening `[min,max]`; see `DEVELOPMENT_PLAN.md` Appendix C.
+
+---
+
+### Diversity observability
+
+For diffusion trees, **distinct exploration** does **not** require distinct final text. Two leaves can decode to the same code while still representing different denoising trajectories:
+
+- different response positions were committed at different times,
+- different sibling edges updated different masked regions,
+- the same final tokens were reached through different macro-step paths.
+
+To make this visible, Dream now logs several diversity metrics from `dream/src/observability.py`.
+
+#### What to look at
+
+These metrics appear in:
+
+- `python dream/scripts/validate_dream_tree.py ...`
+- `EntropyMCTSTrainer.eval_step()` / `train_step()`
+- `dream/scripts/run_dream_comparison.py` logs and WandB rows
+
+Key metrics:
+
+| Metric | What it measures | Why it matters |
+|--------|------------------|----------------|
+| `leaf_text_unique_frac` | Fraction of leaves with unique final response token sequences | Output diversity only |
+| `leaf_path_unique_frac` | Fraction of leaves with unique parent→child edge signatures | Detects distinct trajectories even if final text matches |
+| `leaf_schedule_unique_frac` | Fraction of leaves with unique token-commit schedules | Best answer to “same tokens, different denoising order?” |
+| `avg_pairwise_leaf_hamming` | Average normalized Hamming distance between leaf responses | Surface-level output spread |
+| `avg_pairwise_schedule_distance` | Average distance between token-commit schedules | Trajectory-level spread |
+| `mean_sibling_position_overlap` | Average overlap in positions updated by sibling edges | Low overlap suggests broader local exploration |
+| `mean_sibling_token_agreement` | On shared updated positions, how often sibling edges commit the same token | Distinguishes “same region, same token” vs real divergence |
+| `unique_steps_in_edge_count` | Number of distinct `steps_in_edge` values in the tree | Quick sanity check for adaptive branching variation |
+
+#### Recommended checks
+
+1. Run `validate_dream_tree.py` on a real prompt.
+2. Inspect `leaf_text_unique_frac` and `leaf_schedule_unique_frac` together.
+3. If `leaf_text_unique_frac` is low but `leaf_schedule_unique_frac` is high, the tree is exploring different **trajectories** even when it converges to similar outputs.
+4. If both are low, the tree may be collapsing.
+5. If `mean_sibling_position_overlap` is near 1.0 and `mean_sibling_token_agreement` is also high, sibling branches are barely diversifying.
+
+#### Example command
+
+```bash
+python dream/scripts/validate_dream_tree.py \
+  --max-tree-nodes 5 \
+  --branch-width 2 \
+  --steps-per-expansion 16 \
+  --max-new-tokens 128
+```
+
+Look for the `Diversity summary:` block in the output.
+
+#### Practical interpretation
+
+- High `leaf_text_unique_frac`, high `leaf_schedule_unique_frac`:
+  broad exploration in both output and trajectory space.
+- Low `leaf_text_unique_frac`, high `leaf_schedule_unique_frac`:
+  trajectories differ, but the model is converging to the same answer. This still counts as meaningful diffusion-space exploration.
+- Low `leaf_text_unique_frac`, low `leaf_schedule_unique_frac`:
+  probable branch collapse.
+- High `mean_sibling_position_overlap` with low token disagreement:
+  branches are mostly repeating the same local updates.
 
 ---
 
@@ -211,7 +290,7 @@ On a cloud machine with sufficient GPU memory (e.g. A100 40GB+):
    reward_fn = SyntaxReward()
 
    # Execution-based reward (fraction of tests passed from registry):
-   # reward_fn = ExecutionLiteReward(registry_path="data/execution_lite.json")
+   # reward_fn = ExecutionLiteReward(registry_path="dream/data/code_grpo_train.sample.jsonl")
    ```
 
    You can later experiment with an LLM-as-a-judge by wrapping an

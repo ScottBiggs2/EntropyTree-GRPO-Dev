@@ -112,6 +112,7 @@ def main():
     from dream.src.config import MCTSConfig
     from dream.src.model_adapter import ModelAdapter
     from dream.src.entropy import EntropyComputer
+    from dream.src.observability import tree_diversity_metrics
     from dream.src.tree_builder import EntropyGuidedTreeBuilder
     from dream.src.utils import load_model_and_tokenizer
 
@@ -195,6 +196,16 @@ def main():
                 )
     elif args.adaptive_stepping:
         print("NOTE: no steps_in_edge recorded (unexpected for adaptive expansions).")
+
+    diversity = tree_diversity_metrics(root, leaves)
+    print("Diversity summary:")
+    for key in sorted(diversity.keys()):
+        print(f"  {key}={diversity[key]:.4f}")
+    print(
+        "Interpretation: leaf_text_unique_frac measures distinct final responses, "
+        "while leaf_path_unique_frac / leaf_schedule_unique_frac measure distinct denoising paths "
+        "even when the decoded text matches."
+    )
 
     ok = root.entropy is not None and n_leaves >= 1 and all(
         l.entropy is not None for l in leaves

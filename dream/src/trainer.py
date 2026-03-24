@@ -17,6 +17,7 @@ from dream.src.loss import WeightedGRPOLoss
 from dream.src.entropy import EntropyComputer
 from dream.src.time_weight import TimeWeighter
 from dream.src.model_adapter import ModelAdapter
+from dream.src.observability import tree_diversity_metrics
 
 
 RewardFn = Callable[[str, str], float]
@@ -249,6 +250,7 @@ class EntropyMCTSTrainer:
             "avg_entropy": avg_entropy,
             "n_transitions": 0.0,
             "n_loss_forwards": 0.0,
+            **tree_diversity_metrics(root, leaves),
         }
 
     def train_step(self, prompt: str) -> Dict[str, float]:
@@ -341,5 +343,6 @@ class EntropyMCTSTrainer:
         }
         # Merge in loss-internal diagnostics (n_transitions, weights, etc.).
         metrics.update({k: float(v) for k, v in loss_metrics.items()})
+        metrics.update(tree_diversity_metrics(root, leaves))
         return metrics
 

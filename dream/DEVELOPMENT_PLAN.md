@@ -1252,6 +1252,18 @@ optimizer.step()
 
 **Objective**: Design a concrete GRPO configuration for code generation, inspired by DiffuCoder and compatible with both Dream and the entropy-tree method. This covers reward design, datasets, and judge options (including an optional LLM-as-a-judge with fallbacks).
 
+**Status note (2026-03-23)**: The core Dream tree / loss / baseline mechanics are now in place, but the active comparison runner still defaults to `SyntaxReward`. That means the stack is **not yet** in a full code-GRPO regime. Treat this section as the transition point from "Dream mechanics validated" to "full code RL plumbing," and use `dream/FULL_GRPO_EXTENSION_PLAN.md` as the detailed execution plan for that extension.
+
+**Controlled-comparison principle**: for the main Dream code result, keep the following fixed across flat GRPO and entropy-tree GRPO:
+
+- same model family and adapter setup,
+- same prompt template,
+- same task source,
+- same reward stack,
+- same evaluation harness.
+
+The primary algorithmic difference should be rollout structure and credit assignment, not unrelated reward or prompting changes.
+
 ### 11.1 Lessons from DiffuCoder
 
 From the DiffuCoder paper and repo:
@@ -1295,8 +1307,10 @@ We want a reward setup that:
     - `tests_passed_fraction * 0.8` (primary signal)
     - + shaping bonuses (AST parse, `def` + `return`, function name, control flow, indentation).
   - Use for:
-    - serious GRPO runs on Dream in the cloud,
+    - the intended next default for serious GRPO runs on Dream in the cloud,
     - benchmarks aligned with our existing execution-lite dataset (subset of HumanEval-like problems).
+  - Current limitation:
+    - the active `dream/scripts/run_dream_comparison.py` runner still uses `SyntaxReward`, so promoting execution-backed reward into the main runner remains part of the next implementation phase.
 
 - **LLMEvalReward** (`dream.src.rewards.LLMEvalReward`)
   - Placeholder class that returns 0.0 by default.
@@ -1311,8 +1325,10 @@ We want a reward setup that:
 **Recommended default stack**:
 
 1. **Phase A (local / early)**: `SyntaxReward`
-2. **Phase B (cloud, primary)**: `ExecutionLiteReward`
+2. **Phase B (cloud, primary code RL)**: `ExecutionLiteReward`
 3. **Phase C (exploratory)**: `0.7 * ExecutionLiteReward + 0.3 * LLMEvalReward`
+
+**Research note**: Judge reward and DiffuCoder-style coupled sampling should remain **out of the first headline comparison** unless explicitly promoted to the main method. Otherwise they become extra confounds on top of tree search.
 
 ### 11.3 Benchmarks and datasets
 
@@ -1326,7 +1342,18 @@ We want a reward setup that:
   - Use subset (e.g., 100–200 tasks) for faster eval.
 - **Execution-lite internal dataset**:
   - Already wired via `data/execution_lite.json`.
-  - Use for training and dev evaluation (cheaper than full HumanEval harness).
+  - Use for training and dev evaluation during the transition to full code GRPO (cheaper than full HumanEval harness).
+
+**Current gap**:
+
+- We still do **not** have a canonical Dream-specific code task schema, formatter layer, or train/dev split abstraction.
+- That missing layer is now the main blocker between "Dream GRPO mechanics work" and "full code-GRPO experiments are ready."
+- The detailed implementation path for this gap now lives in `dream/FULL_GRPO_EXTENSION_PLAN.md`:
+  - task schema and registry,
+  - prompt formatting and code extraction,
+  - execution-first reward promotion,
+  - dataset-aware comparison runner,
+  - external benchmark evaluation.
 
 **Prompting templates**:
 
@@ -1342,6 +1369,7 @@ We want a reward setup that:
 - Implement a small "registry" builder that can convert a subset of HumanEval-style tasks into the `execution_lite` JSON format, so ExecutionLiteReward can be reused with Dream.
 - For full HumanEval/MBPP:
   - use external evaluation harnesses (OpenAI human-eval repo, EvalPlus) *after* training; keep training-time reward based on the internal registry for simplicity.
+- Keep benchmark and training-task choices explicit in `research_decisions.md`; they are now genuine research decisions, not just implementation details.
 
 ### 11.4 Trainer wiring
 
@@ -1387,6 +1415,16 @@ trainer = EntropyMCTSTrainer(model, tokenizer, cfg, reward_fn, optimizer)
 
 Use Dream's `diffusion_generate` with `output_history=True` to extract transitions. This is the "fair comparison" baseline — same model, same reward, same sampling; only difference is tree vs no tree.
 
+**Clarification (2026-03-23)**:
+
+- The core baseline definition remains **flat trajectory-level GRPO**.
+- LoRA vs dense full fine-tune are additional systems variants, not a replacement for the baseline concept.
+- For the first clean Dream code comparison, prefer:
+  - flat GRPO + LoRA,
+  - tree GRPO fixed-step + LoRA,
+  - tree GRPO adaptive + LoRA.
+- Treat dense full fine-tune as optional and clearly labeled if included, since it changes the training-capacity regime rather than just the search structure.
+
 ### Verification
 
 - [ ] Baseline GRPO runs for 10 steps without crash
@@ -1406,9 +1444,16 @@ Use Dream's `diffusion_generate` with `output_history=True` to extract transitio
 | Condition | Method | Config |
 |-----------|--------|--------|
 | A | Dream IT (untrained baseline) | No training |
-| B | Dream IT + standard GRPO | `BaselineGRPOTrainer` |
-| C | Dream IT + entropy-MCTS GRPO (fixed step) | `adaptive_stepping=False` |
-| D | Dream IT + entropy-MCTS GRPO (adaptive) | `adaptive_stepping=True` |
+| B | Dream IT + flat GRPO + LoRA | `BaselineGRPOTrainer`, `use_lora=True` |
+| C | Dream IT + entropy-MCTS GRPO (fixed step) + LoRA | `adaptive_stepping=False`, `use_lora=True` |
+| D | Dream IT + entropy-MCTS GRPO (adaptive) + LoRA | `adaptive_stepping=True`, `use_lora=True` |
+| E | Optional: Dream IT + flat GRPO dense full FT | `BaselineGRPOTrainer`, `use_lora=False` |
+
+**Important scope note**:
+
+- Conditions `B-D` are the cleanest first-pass comparison set because they hold training capacity more constant.
+- Condition `E` is useful for systems comparison but should not silently replace the main fairness baseline.
+- Judge reward and coupled sampling should remain outside the first headline matrix unless explicitly declared as part of the main method.
 
 ### Metrics
 
@@ -1417,6 +1462,17 @@ Use Dream's `diffusion_generate` with `output_history=True` to extract transitio
 - Training loss curves
 - Diversity of tree leaves (number of unique completions)
 - Compute cost per training step (wall-clock time, peak GPU memory)
+
+**Readiness condition**:
+
+Do not treat this step as complete until the following are true:
+
+- training uses an execution-based reward as the primary signal,
+- flat and tree arms share the same prompt template and task source,
+- the comparison runner is dataset-aware rather than driven by a short handwritten prompt list,
+- external evaluation can run from saved checkpoints without editing training code.
+
+These are now spelled out in more detail in `dream/FULL_GRPO_EXTENSION_PLAN.md`.
 
 ### Reference Numbers
 

@@ -1,8 +1,8 @@
 # Research Decision Tracker
 
 **Project**: Entropy-Guided MCTS-GRPO for Diffusion Language Models  
-**Model**: `dllm-collection/Qwen2.5-Coder-0.5B-Instruct-diffusion-mdlm-v0.1`  
-**Last Updated**: 2026-03-15
+**Scope**: Historical MDLM toy stack in `src/` plus active Dream 7B work in `dream/`  
+**Last Updated**: 2026-03-23
 
 ---
 
@@ -84,8 +84,8 @@ sampled = torch.multinomial(probs, num_samples=1)
 
 | Field | Value |
 |-------|-------|
-| **Status** | `CLOSED` |
-| **Default** | Start with full-sequence denoising (simpler), add block-based as optimization |
+| **Status** | `DECIDED` |
+| **Decision** | Start with full-sequence denoising as the reference implementation; revisit block-based denoising only as a later optimization or separate extension |
 | **Rationale** | The dLLM sampler uses block-based denoising (`block_size=64`) for efficiency. For our tree construction, full-sequence is conceptually simpler and matches the design docs. Block-based can be added later if memory or speed is an issue. |
 
 **Tradeoffs**:
@@ -94,7 +94,8 @@ sampled = torch.multinomial(probs, num_samples=1)
 - Hybrid: full-sequence for tree branching, block-based for leaf completion
 
 **Your Notes**:
-> Let's begin with the MDLM system because it is simpler in implementation and the MDLM guarantees perfect complete sequence entropy over tokens at each timestep. We can experiment with generalizing the method to BD3LM and other systems once we have assessed the core capabilities of the idea in the toy MDLM setting. 
+> Let's begin with the MDLM system because it is simpler in implementation and the MDLM guarantees perfect complete sequence entropy over tokens at each timestep. We can experiment with generalizing the method to BD3LM and other systems once we have assessed the core capabilities of the idea in the toy MDLM setting.
+> Update (2026-03-23): Dream work does not reopen this choice directly. The Dream stack is now a separate scaling track rather than a return to block-denoising.
 
 ---
 
@@ -102,8 +103,8 @@ sampled = torch.multinomial(probs, num_samples=1)
 
 | Field | Value |
 |-------|-------|
-| **Status** | `CLOSED` |
-| **Default** | Mean entropy across masked positions only |
+| **Status** | `DECIDED` |
+| **Decision** | Mean entropy across masked positions only |
 | **Alternatives** | Max, sum, position-weighted, attention-weighted |
 
 **Rationale**: Mean is simplest and most interpretable. Computing over only-masked-positions (not already-unmasked tokens) gives a cleaner signal about remaining uncertainty. Max might be better for finding "one really hard token" but could be noisy.
@@ -119,8 +120,8 @@ sampled = torch.multinomial(probs, num_samples=1)
 
 | Field | Value |
 |-------|-------|
-| **Status** | `CLOSED` |
-| **Default** | `low_confidence` (matches model card default) |
+| **Status** | `DECIDED` |
+| **Decision** | `low_confidence` (matches model card default) |
 | **Alternatives** | `random` |
 
 **Rationale**: The dLLM sampler supports two remasking strategies. `low_confidence` uses the model's own softmax probabilities to decide which tokens to commit (highest confidence first). `random` picks randomly. For tree diversity, `random` might produce more varied branches, but `low_confidence` produces higher quality individual trajectories.
@@ -152,8 +153,8 @@ sampled = torch.multinomial(probs, num_samples=1)
 
 | Field | Value |
 |-------|-------|
-| **Status** | `OPEN` |
-| **Default** | Simple heuristic reward (syntax check + keyword matching) for Phase 1-4, real execution-based reward for Phase 5+ |
+| **Status** | `DECIDED` |
+| **Decision** | Use simple heuristic reward for early mechanics validation, then transition to execution-based code reward for serious Dream/code GRPO work |
 | **Alternatives** | Sandbox code execution from day 1, LLM-as-judge |
 
 **Rationale**: Getting code execution sandboxing right is a separate engineering task. For validating the tree/entropy/loss machinery, a simple heuristic reward is sufficient. The reward function is modular and can be swapped.
@@ -164,7 +165,7 @@ sampled = torch.multinomial(probs, num_samples=1)
 3. AST-parseable → 1.0, else 0.0
 
 **Your Notes**:
-> _(paste responses here)_
+> Decided light heuristic for early testing. That lite execution setup is running well, but now it is time to expand to a more developed RL environment. 
 
 ---
 
@@ -173,8 +174,8 @@ sampled = torch.multinomial(probs, num_samples=1)
 | Field | Value |
 |-------|-------|
 | **Status** | `OPEN` |
-| **Default** | `max_tree_nodes=15, branch_width=3, steps_per_expansion=32` for dev; scale to `30/3/32` for experiments |
-| **Rationale** | M1 MacBook memory is limited. Each node stores a `[seq_len]` tensor. With seq_len=512, that's ~2KB per node (int64). The real cost is the forward passes: 15 nodes × branch_width=3 = up to 45 forward passes per tree. At ~0.5s per forward on M1, that's ~22s per tree. Manageable for dev. |
+| **Default** | For Dream: start conservative (`max_tree_nodes` roughly 5-15, `branch_width` 2-3, modest chunk size), then scale only after VRAM and wall-clock profiling |
+| **Rationale** | This is no longer just a laptop-development question. In Dream, the real bottleneck is GPU memory and runtime across tree build plus GRPO backward. Tree budget remains an active hyperparameter, especially once adaptive stepping is enabled. |
 
 **Ablation plan** (for experiments):
 - `max_tree_nodes`: 10 / 15 / 30 / 50
@@ -182,7 +183,7 @@ sampled = torch.multinomial(probs, num_samples=1)
 - `steps_per_expansion`: 16 / 32 / 64
 
 **Your Notes**:
-> _(paste responses here)_
+> Updated with Dream in mind - tree sizing will remain a key hyperparameter, especially with adaptive stepping and clamping/stability measures to investiaget as well. 
 
 ---
 
@@ -191,8 +192,8 @@ sampled = torch.multinomial(probs, num_samples=1)
 | Field | Value |
 |-------|-------|
 | **Status** | `OPEN` |
-| **Default** | `alpha_time=1.0, alpha_entropy=0.5` (from design doc) |
-| **Rationale** | Starting with the design doc defaults. Time weighting is well-established (TempFlow-GRPO). Entropy weighting is our novel contribution — start at half weight to be conservative, ablate later. |
+| **Default** | In Dream, keep `alpha_time=1.0, alpha_entropy=0.5` as the current implementation default, but treat the balance as an active research hyperparameter |
+| **Rationale** | The earlier scale-mismatch bug has been corrected in Dream via interval-aware time weighting and analytic entropy normalization, so the defaults are now conceptually cleaner. But the corrected implementation does **not** mean the best balance is settled; the relative contribution of time and entropy should still be treated as a real ablation axis. |
 
 **Ablation plan**:
 - `alpha_entropy`: 0.0 (no entropy) / 0.25 / 0.5 / 1.0
@@ -202,6 +203,11 @@ sampled = torch.multinomial(probs, num_samples=1)
 - The current implementation normalizes `w_time` so the full schedule sums to 1, which makes each individual per-step time weight `O(1 / T)`.
 - The current entropy weight is clamped around `O(1)`.
 - Therefore the additive combination `alpha_time * w_time + alpha_entropy * w_ent` is not scale-balanced: with defaults, entropy weighting dominates unless time weights are rescaled or interpreted as interval mass over multiple steps.
+
+**Important Note (2026-03-23)**:
+- The prior concept error has been corrected in the Dream implementation.
+- The time-weighting side is most directly motivated by TempFlow-GRPO; BranchGRPO mainly supports the tree credit-assignment side.
+- The corrected implementation should be treated as a stable starting point, not as proof that the default `alpha_*` values are scientifically settled.
 
 **Your Notes**:
 > _(paste responses here)_
@@ -213,18 +219,11 @@ sampled = torch.multinomial(probs, num_samples=1)
 | Field | Value |
 |-------|-------|
 | **Status** | `OPEN` |
-| **Default** | HumanEval (small, 164 problems) for primary metric; MBPP subset for secondary |
-| **Rationale** | Model already has HumanEval/MBPP baselines on the model card (28.1 / 23.0). Small enough to run locally. EvalPlus would be ideal but is heavier. |
-
-**Baseline numbers** (from model card):
-| Model | HumanEval | MBPP |
-|-------|-----------|------|
-| Qwen2.5-Coder-0.5B-Instruct (AR) | 28.0 | 52.9 |
-| MDLM v0.1 (our target, pre-training) | 28.1 | 23.0 |
-| MDLM v1.1 (improved) | 41.5 | 33.6 |
+| **Default** | For Dream/code GRPO: HumanEval pass@1 as the primary reported metric, MBPP as secondary, EvalPlus optional once the harness is stable |
+| **Rationale** | The evaluation question is now tied to the Dream code setting, not just the toy MDLM phase. We want a benchmark suite that is standard enough for comparison to Dream-Coder / DiffuCoder style results, while still being tractable to run repeatedly during development. |
 
 **Your Notes**:
-> _(paste responses here)_
+> Needs updating for Dream, to compete with Apple DiffuCoder
 
 ---
 
@@ -232,12 +231,12 @@ sampled = torch.multinomial(probs, num_samples=1)
 
 | Field | Value |
 |-------|-------|
-| **Status** | `OPEN` |
-| **Default** | Stay on M1 through Phase 4 (single training step verified). Move to GPU for Phase 5+ (full training runs, ablations). |
+| **Status** | `DECIDED` |
+| **Decision** | Dream work happens on cloud GPUs; local machines remain for light development and mock-model tests only |
 | **Rationale** | M1 is fine for development, debugging, and single-step validation. Full training runs with tree construction will be too slow locally. |
 
 **Your Notes**:
-> _(paste responses here)_
+> Work on Dream is happening strictly on cloud GPUs now. 
 
 ---
 
@@ -255,7 +254,7 @@ sampled = torch.multinomial(probs, num_samples=1)
 - Checkpoints: `checkpoints/baseline_grpo/` and `checkpoints/entropy_mcts_grpo/` so both are clearly named.
 
 **Your Notes**:
-> _(paste responses here)_
+> For Dream this was expanded operationally to also include flat GRPO with LoRA and a dense full-finetune arm. Conceptually, the primary fairness baseline is still flat trajectory-level GRPO; the extra arms are comparison variants, not a replacement for the baseline definition.
 
 ---
 
@@ -264,16 +263,16 @@ sampled = torch.multinomial(probs, num_samples=1)
 | Field | Value |
 |-------|-------|
 | **Status** | `DECIDED` |
-| **Decision** | Clip advantages to `[-advantage_clip, +advantage_clip]` (default 2.0); clamp entropy weight \(w_{\mathrm{ent}} = H/\bar{H}\) to `[entropy_weight_min, entropy_weight_max]` (default 0.5 and 2.0). |
-| **Rationale** | Cloud test runs showed loss sign flips and unstable reward when (1) depth-wise advantages grew unbounded (few nodes per depth → large z-scores) and (2) entropy weight increased over training (model entropy at nodes rising), amplifying gradient scale. Clipping/clamping keeps the weighted GRPO signal bounded and stabilizes training. |
+| **Decision** | Clip advantages to `[-advantage_clip, +advantage_clip]`; clamp entropy weight after normalization, with implementation-specific defaults allowed to evolve as profiling improves |
+| **Rationale** | Cloud test runs showed loss sign flips and unstable reward when (1) depth-wise advantages grew unbounded (few nodes per depth → large z-scores) and (2) entropy weighting amplified gradient scale. The clamp decision is settled, but the exact clamp range is now implementation-specific: the Dream stack currently uses analytic entropy normalization and different default clamp bounds than the older MDLM-era text. |
 
 **Details**:
 - **Advantage clip**: Applied in `AdvantageComputer` after depth-wise z-score; default `advantage_clip=2.0`. Config: `advantage_clip`.
-- **Entropy weight clamp**: Applied in `WeightedGRPOLoss._collect_transitions` when setting `entropy_weight` on each transition; default `[0.5, 2.0]`. Config: `entropy_weight_min`, `entropy_weight_max`.
+- **Entropy weight clamp**: Applied in `WeightedGRPOLoss._collect_transitions` when setting `entropy_weight` on each transition. In the active Dream stack, the normalized entropy weight is based on the corrected convention (`H_masked_mean / log(V)` by default) and the current defaults are tuned separately from the old `[0.5, 2.0]` setting.
 - Bug fix at same time: removed erroneous `+ 1e-8` on the advantage value in BranchGRPO (only std denominator keeps 1e-8).
 
 **Your Notes**:
-> _(paste responses here)_
+> Parameters will continue to be tweaked, but this is generally correct (03-23).
 
 ---
 
@@ -282,7 +281,7 @@ sampled = torch.multinomial(probs, num_samples=1)
 | Field | Value |
 |-------|-------|
 | **Status** | `OPEN` |
-| **Default** | Keep fixed `steps_per_expansion` as the baseline implementation, but treat it as a bootstrap baseline rather than the target long-term design |
+| **Default** | Keep fixed `steps_per_expansion` as the baseline implementation, but treat uncertainty-triggered branching as the main research target |
 | **Alternatives** | Entropy-threshold branching, token-fraction branching, KL-budget branching |
 
 **Rationale**: Fixed branch intervals are simple and reproducible, but they do not align branch points with the model's actual decision structure. [TreeRL](https://arxiv.org/abs/2506.11902) argues that branching from high-uncertainty intermediate states improves search efficiency under the same generation token budget. For our method, fixed-step branching is acceptable for a baseline but not the strongest conceptual endpoint.
@@ -294,6 +293,7 @@ sampled = torch.multinomial(probs, num_samples=1)
 
 **Your Notes**:
 > Concept check (2026-03-15): treat fixed-step branching as a baseline, not a settled research choice. Once baseline parity is established, prioritize uncertainty-triggered branching over schedule-based branching.
+> Concept check (2026-03-23): Adaptive branching has been implemented properly in Dream. It will be interesting to see what the variation in branches truly is.
 
 ---
 
@@ -301,8 +301,8 @@ sampled = torch.multinomial(probs, num_samples=1)
 
 | Field | Value |
 |-------|-------|
-| **Status** | `OPEN` |
-| **Default** | For the fixed-step baseline, the current parent-step lookup is an acceptable proxy. If adaptive stepping is introduced, switch to **interval-aware** edge weighting |
+| **Status** | `DECIDED` |
+| **Decision** | If adaptive stepping is used, time weighting must be interval-aware rather than parent-step lookup only |
 | **Alternatives** | Parent-step lookup only, interval-mass weighting, full micro-step logging |
 
 **Rationale**: The current loss attaches time weight to `node.step_index`, i.e. the parent timestamp of an edge. This is only faithful when every edge spans the same number of denoising steps. If branches happen at inconsistent times, different edges cover different intervals and should not all receive a single-point weight. The natural discrete-time generalization of TempFlow-style schedules is:
@@ -316,6 +316,7 @@ $$w_{\text{edge}}(t_0, t_1) = \sum_{t=t_0}^{t_1-1} w(t)$$
 
 **Your Notes**:
 > Concept check (2026-03-15): point lookup is only a fixed-step proxy. Dynamic branching should ship together with interval-aware time weighting.
+> Update (2026-03-23): This has been addressed and implemented in Dream with the relevant literature in mind. 
 
 ---
 
@@ -323,8 +324,8 @@ $$w_{\text{edge}}(t_0, t_1) = \sum_{t=t_0}^{t_1-1} w(t)$$
 
 | Field | Value |
 |-------|-------|
-| **Status** | `OPEN` |
-| **Default** | Keep **mean entropy over masked positions** for node ranking, but normalize it against a baseline defined on the same statistic |
+| **Status** | `DECIDED` |
+| **Decision** | Keep **mean entropy over masked positions** for node ranking, and normalize it against a baseline defined on the same statistic; in Dream, the active implementation default is the analytic fallback `H_masked_mean / log(V)` |
 | **Alternatives** | Sequence-averaged entropy, masked-position mean entropy with analytic bound, masked-position mean entropy with empirical stage baseline |
 
 **Rationale**: The current implementation stores node entropy as the mean over masked positions only, but compares it against `masking_ratio * log(V)`. That denominator corresponds to a sequence-averaged upper bound, not the masked-position mean. Mixing the two artificially inflates the entropy ratio at later denoising stages and muddies the interpretation of both entropy weighting and adaptive branch thresholds.
@@ -340,6 +341,181 @@ $$w_{\text{edge}}(t_0, t_1) = \sum_{t=t_0}^{t_1-1} w(t)$$
 
 **Your Notes**:
 > Concept check (2026-03-15): the entropy signal itself is good, but the current normalization convention is not yet conceptually clean.
+> Update (2026-03-23): Implemented the 'analytic fallback' in Dream 
+
+---
+
+## D-018: Primary Training Task Source For Full Code GRPO
+
+| Field | Value |
+|-------|-------|
+| **Status** | `OPEN` |
+| **Default** | Start with an internal execution-backed code task registry for bring-up, then move toward a cleaner HumanEval-style or larger code-task training source for the main Dream comparison |
+| **Rationale** | The Dream stack has execution-lite scaffolding, but full code GRPO needs a deliberate task source decision. This is now a scientific choice, not just an implementation detail, because it affects comparability, reward quality, and scale. |
+
+**Candidate options**:
+1. Legacy `execution_lite` registry for initial bring-up
+2. HumanEval-style curated train/dev task set for the first clean comparison
+3. Larger code-training source inspired by DiffuCoder / AceCode for scaling
+
+**Your Notes**:
+> _(paste responses here)_
+
+---
+
+## D-019: Primary Reward Stack For Full Code GRPO
+
+| Field | Value |
+|-------|-------|
+| **Status** | `OPEN` |
+| **Default** | Execution-based reward as primary, with light shaping for variance when tests fail; no judge in the main result |
+| **Rationale** | This keeps the Dream code setting closest to DiffuCoder and minimizes confounding. Syntax-only reward should remain a smoke-test tool, not the main training signal. |
+
+**Your Notes**:
+> _(paste responses here)_
+
+---
+
+## D-020: Execution Backend For Code Reward
+
+| Field | Value |
+|-------|-------|
+| **Status** | `OPEN` |
+| **Default** | Local subprocess sandbox for development; E2B or another remote backend for heavier runs if needed |
+| **Rationale** | The choice affects throughput, isolation, and reproducibility. It should be explicit because the backend can materially change the practicality of large Dream GRPO runs. |
+
+**Your Notes**:
+> _(paste responses here)_
+
+---
+
+## D-021: Prompt Template Lock For Code GRPO
+
+| Field | Value |
+|-------|-------|
+| **Status** | `OPEN` |
+| **Default** | Use one consistent code-oriented chat template across flat GRPO, tree GRPO, and external eval where possible |
+| **Rationale** | Prompt formatting is a major confound in code generation. We should lock a template before comparing baseline vs tree, and stay as close as practical to Dream / DiffuCoder style prompting. |
+
+**Your Notes**:
+> _(paste responses here)_
+
+---
+
+## D-022: Coupled Sampling In Scope Or Out Of Scope
+
+| Field | Value |
+|-------|-------|
+| **Status** | `OPEN` |
+| **Default** | Keep DiffuCoder-style coupled sampling out of the first entropy-tree comparison |
+| **Rationale** | Coupled sampling is an interesting extension, but adding it immediately would introduce a second major algorithmic delta on top of tree search and make causal interpretation harder. |
+
+**Your Notes**:
+> _(paste responses here)_
+
+---
+
+## D-023: LLM-as-a-Judge Usage In Code GRPO
+
+| Field | Value |
+|-------|-------|
+| **Status** | `OPEN` |
+| **Default** | No judge in the headline code-GRPO result; keep judge usage exploratory and explicitly opt-in |
+| **Rationale** | Judge reward may help later, but execution-based code reward is cleaner, more reproducible, and better aligned with the current research goal. |
+
+**Your Notes**:
+> _(paste responses here)_
+
+---
+
+## D-024: Primary Benchmark Claim For Full Code GRPO
+
+| Field | Value |
+|-------|-------|
+| **Status** | `OPEN` |
+| **Default** | HumanEval pass@1 as primary, MBPP as secondary, EvalPlus optional after the harness is stable |
+| **Rationale** | The metric question is no longer just “what can we run?” but “what is the cleanest headline claim for Dream code RL?” This should be decided before the first serious comparison campaign. |
+
+**Your Notes**:
+> _(paste responses here)_
+
+---
+
+## D-025: First CoT / Reasoning Domain For dLLM GRPO
+
+| Field | Value |
+|-------|-------|
+| **Status** | `OPEN` |
+| **Default** | Start with verifier-friendly reasoning tasks rather than open-ended freeform CoT |
+| **Rationale** | CoT RL is especially difficult in dLLMs. A verifier-first domain such as GSM8K-style exact-answer reasoning is a much safer bridge than immediately optimizing unconstrained visible CoT. |
+
+**Your Notes**:
+> _(paste responses here)_
+
+---
+
+## D-026: Visible CoT vs Answer-Only Optimization
+
+| Field | Value |
+|-------|-------|
+| **Status** | `OPEN` |
+| **Default** | Start with answer correctness as the main reward; treat visible reasoning optimization as a second-stage extension |
+| **Rationale** | For dLLMs, visible reasoning traces are especially vulnerable to reward hacking and format drift. Answer correctness is cleaner to verify and better for early stabilization. |
+
+**Your Notes**:
+> _(paste responses here)_
+
+---
+
+## D-027: Reward Type For CoT GRPO
+
+| Field | Value |
+|-------|-------|
+| **Status** | `OPEN` |
+| **Default** | Verifier-first reward, judge second |
+| **Rationale** | For reasoning, we should prefer exact-answer or rule-based verification wherever possible, then layer in judge-based signals only after a strong baseline exists. |
+
+**Your Notes**:
+> _(paste responses here)_
+
+---
+
+## D-028: Output Format Constraints For Reasoning
+
+| Field | Value |
+|-------|-------|
+| **Status** | `OPEN` |
+| **Default** | Use a structured answer format only if it materially improves verification; avoid over-constraining early experiments |
+| **Rationale** | Format constraints can help extraction and reward reliability, but they can also distort the natural generation regime of a diffusion model. This needs to be chosen deliberately. |
+
+**Your Notes**:
+> _(paste responses here)_
+
+---
+
+## D-029: Tree Branching Target For CoT
+
+| Field | Value |
+|-------|-------|
+| **Status** | `OPEN` |
+| **Default** | Treat reasoning-state uncertainty as the tentative branching target, but require flat GRPO parity first |
+| **Rationale** | The central CoT-tree question is where branching should focus: rationale uncertainty, answer uncertainty, or both. This is not settled just because entropy-guided branching works for code completion. |
+
+**Your Notes**:
+> _(paste responses here)_
+
+---
+
+## D-030: Ordering Of CoT Experiments
+
+| Field | Value |
+|-------|-------|
+| **Status** | `OPEN` |
+| **Default** | Do not claim a tree advantage for CoT until flat GRPO on the same reasoning domain is working reliably |
+| **Rationale** | Coding GRPO should serve as the infrastructure proving ground. Reasoning experiments should first establish that plain diffusion GRPO works at all before layering on tree search. |
+
+**Your Notes**:
+> _(paste responses here)_
 
 ---
 

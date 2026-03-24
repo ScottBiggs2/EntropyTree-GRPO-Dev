@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Light Dream 7B comparison runs with WandB (entropy-tree + LoRA).
+Light Dream 7B comparison runs with WandB.
 
 Phases (run separately or via run_dream_comparison.sh):
-  initial_eval          — tree build + SyntaxReward only, no optimizer (pre-train snapshot)
+  initial_eval          — eval only, no optimizer
   baseline_train        — **MCTS / tree** GRPO, fixed steps (NOT dense; use grpo_* for flat GRPO)
   grpo_lora_baseline    — flat trajectory GRPO (no tree), LoRA — same r/α as tree when --lora
   grpo_dense_baseline   — flat trajectory GRPO, **full fine-tune** (ignores --lora); needs big GPU
@@ -29,7 +29,7 @@ import sys
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 _repo_root = Path(__file__).resolve().parents[2]
 if str(_repo_root) not in sys.path:
@@ -62,11 +62,13 @@ import torch
 DEFAULT_CHECKPOINT_ROOT = "/scratch/biggs.s/entropy_tree_grpo_dream"
 
 from dream.src.config import MCTSConfig
-from dream.src.rewards import SyntaxReward
+from dream.src.rewards import build_reward_function
+from dream.src.task_registry import filter_code_tasks, infer_default_split, load_code_tasks
 from dream.src.trainer import BaselineGRPOTrainer, EntropyMCTSTrainer
 from dream.src.utils import build_lr_scheduler, load_model_and_tokenizer
 
 
+DEFAULT_LEGACY_DATASET = str(_repo_root / "data" / "execution_lite.json")
 DEFAULT_PROMPTS = [
     "Write a Python function to check if a number is prime.",
     "Write a Python function that returns the factorial of n.",
@@ -86,6 +88,39 @@ def load_prompts(path: str | None) -> List[str]:
         with open(path) as f:
             return [ln.strip() for ln in f if ln.strip()]
     return DEFAULT_PROMPTS
+
+
+def load_workload(
+    *,
+    dataset_path: str | None,
+    prompts_file: str | None,
+    dataset_split: str,
+    max_tasks: int,
+    phase: str,
+) -> Tuple[List[str], Dict[str, Any]]:
+    if dataset_path:
+        tasks = load_code_tasks(dataset_path)
+        chosen_split = dataset_split or infer_default_split(tasks, phase)
+        tasks = filter_code_tasks(tasks, chosen_split)
+        if max_tasks > 0:
+            tasks = tasks[:max_tasks]
+        prompts = [task.canonical_prompt for task in tasks]
+        return prompts, {
+            "source": "dataset",
+            "dataset_path": dataset_path,
+            "dataset_split": chosen_split,
+            "n_tasks": len(tasks),
+        }
+
+    prompts = load_prompts(prompts_file or None)
+    if max_tasks > 0:
+        prompts = prompts[:max_tasks]
+    return prompts, {
+        "source": "prompts_file" if prompts_file else "default_prompts",
+        "dataset_path": "",
+        "dataset_split": "",
+        "n_tasks": len(prompts),
+    }
 
 
 PHASE_ORDER = (
@@ -145,7 +180,38 @@ def main() -> int:
         default=6,
         help="Epochs per phase (default 6; use shell NUM_EPOCHS for long runs).",
     )
+    p.add_argument(
+        "--dataset",
+        type=str,
+        default="",
+        help="Task dataset path (.jsonl preferred; .json legacy execution-lite also supported).",
+    )
+    p.add_argument(
+        "--dataset-split",
+        type=str,
+        default="",
+        help="Task split to use (train/dev/all). Default: inferred from phase.",
+    )
     p.add_argument("--prompts_file", type=str, default="")
+    p.add_argument(
+        "--max-tasks",
+        type=int,
+        default=0,
+        help="Limit dataset tasks or prompts used in this run (0 = all).",
+    )
+    p.add_argument(
+        "--reward",
+        type=str,
+        default="syntax",
+        choices=("syntax", "code_format", "execution", "execution_shaped", "execution_lite"),
+        help="Reward function to use. Execution rewards require prompts that exist in the dataset/registry.",
+    )
+    p.add_argument(
+        "--reward-timeout",
+        type=float,
+        default=2.0,
+        help="Timeout in seconds for execution-backed rewards.",
+    )
     p.add_argument("--max_tree_nodes", type=int, default=8)
     p.add_argument("--branch_width", type=int, default=2)
     p.add_argument("--steps_per_expansion", type=int, default=12)
@@ -203,8 +269,17 @@ def main() -> int:
         help="Log metrics as phase/key (separate charts per arm). Default: flat keys like run_experiment_2.py for easy multi-run compare.",
     )
     args = p.parse_args()
+    dataset_path = args.dataset or ""
+    if args.reward in ("execution", "execution_shaped", "execution_lite") and not dataset_path:
+        dataset_path = DEFAULT_LEGACY_DATASET
 
-    prompts = load_prompts(args.prompts_file or None)
+    prompts, workload = load_workload(
+        dataset_path=dataset_path or None,
+        prompts_file=args.prompts_file or None,
+        dataset_split=args.dataset_split,
+        max_tasks=args.max_tasks,
+        phase=args.phase,
+    )
 
     # Phase-specific tree / loss hyperparameters
     adaptive = False
@@ -277,6 +352,10 @@ def main() -> int:
         f"[dream_cmp] adaptive_stepping={adaptive} branch_threshold={branch_threshold} "
         f"alpha_entropy={alpha_entropy} entropy_weight_min={args.entropy_weight_min}"
     )
+    print(
+        f"[dream_cmp] reward={args.reward} workload_source={workload['source']} "
+        f"dataset_split={workload['dataset_split'] or 'n/a'}"
+    )
     if args.phase == "baseline_train":
         print(
             "[dream_cmp] NOTE: baseline_train is **MCTS (tree)** GRPO, not flat/dense GRPO."
@@ -324,6 +403,11 @@ def main() -> int:
                 "phase": args.phase,
                 "phase_idx": phase_idx,
                 "wandb_flat_keys": not args.wandb_prefixed_keys,
+                "reward_name": args.reward,
+                "reward_timeout": args.reward_timeout,
+                "dataset_path": workload["dataset_path"],
+                "dataset_split": workload["dataset_split"],
+                "workload_source": workload["source"],
             },
         )
 
@@ -349,7 +433,12 @@ def main() -> int:
         if cfg.gradient_checkpointing and hasattr(model, "gradient_checkpointing_enable"):
             model.gradient_checkpointing_enable()
 
-        reward_fn = SyntaxReward()
+        reward_fn = build_reward_function(
+            args.reward,
+            registry_path=dataset_path or None,
+            timeout=args.reward_timeout,
+            project_root=_repo_root,
+        )
         optimizer = torch.optim.AdamW(
             (p for p in model.parameters() if p.requires_grad),
             lr=cfg.learning_rate,
@@ -380,6 +469,8 @@ def main() -> int:
             "cfg_branch_threshold": float(cfg.branch_threshold),
             "cfg_num_baseline_samples": float(cfg.num_baseline_samples),
             "cfg_use_lora": 1.0 if cfg.use_lora else 0.0,
+            "cfg_reward_timeout": float(args.reward_timeout),
+            "cfg_max_tasks": float(args.max_tasks),
         }
 
         t_run0 = time.perf_counter()

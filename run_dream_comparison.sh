@@ -67,7 +67,7 @@ GROUP="$RUN_NAME"
 WANDB_PROJECT="${WANDB_PROJECT:-entropy-tree-grpo-dream}"
 
 # Defaults sized for ~80GB A100 + Dream 7B LoRA + MCTS (OOM on 2nd step if too large).
-# Override before sbatch: NUM_EPOCHS, ENTROPY_WEIGHT_MIN, MAX_TREE_NODES, etc.
+# Override before sbatch: NUM_EPOCHS, ENTROPY_WEIGHT_MIN, MAX_TREE_NODES, DATASET, REWARD, etc.
 NUM_EPOCHS="${NUM_EPOCHS:-32}"
 MAX_TREE_NODES="${MAX_TREE_NODES:-8}"
 BRANCH_WIDTH="${BRANCH_WIDTH:-2}"
@@ -87,6 +87,10 @@ SAVE_EVERY="${SAVE_EVERY:-0}"
 NUM_BASELINE_SAMPLES="${NUM_BASELINE_SAMPLES:-4}"
 # Full fine-tune flat GRPO (no LoRA) — VRAM-heavy (~80GB class for 7B). 0 = skip this arm.
 RUN_GRPO_DENSE_BASELINE="${RUN_GRPO_DENSE_BASELINE:-0}"
+DATASET="${DATASET:-data/execution_lite.json}"
+DATASET_SPLIT="${DATASET_SPLIT:-}"
+REWARD="${REWARD:-execution_shaped}"
+REWARD_TIMEOUT="${REWARD_TIMEOUT:-2.0}"
 
 COMMON=(
   --device cuda
@@ -106,8 +110,15 @@ COMMON=(
   --learning_rate "$LEARNING_RATE"
   --checkpoint-dir "$CHECKPOINT_DIR"
   --num-baseline-samples "$NUM_BASELINE_SAMPLES"
+  --dataset "$DATASET"
+  --reward "$REWARD"
+  --reward-timeout "$REWARD_TIMEOUT"
   --lora
 )
+
+if [ -n "$DATASET_SPLIT" ]; then
+  COMMON+=(--dataset-split "$DATASET_SPLIT")
+fi
 
 if [ "$SAVE_CHECKPOINTS" = "1" ]; then
   mkdir -p "$CHECKPOINT_DIR" || {
