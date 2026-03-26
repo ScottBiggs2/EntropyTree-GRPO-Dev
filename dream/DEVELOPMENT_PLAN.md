@@ -1252,7 +1252,7 @@ optimizer.step()
 
 **Objective**: Design a concrete GRPO configuration for code generation, inspired by DiffuCoder and compatible with both Dream and the entropy-tree method. This covers reward design, datasets, and judge options (including an optional LLM-as-a-judge with fallbacks).
 
-**Status note (2026-03-23)**: The core Dream tree / loss / baseline mechanics are now in place, but the active comparison runner still defaults to `SyntaxReward`. That means the stack is **not yet** in a full code-GRPO regime. Treat this section as the transition point from "Dream mechanics validated" to "full code RL plumbing," and use `dream/FULL_GRPO_EXTENSION_PLAN.md` as the detailed execution plan for that extension.
+**Status note (2026-03-26)**: Core Dream tree / loss / baseline mechanics are in place, and **`run_dream_comparison.py` / `single_step_dream.py` support CLI-selected rewards** (e.g. `--reward execution_shaped`) with **dataset-backed** prompts via `--dataset`. Default reward name may still be `syntax` if you omit `--reward`; for real code RL on GPU, pass **`execution_shaped`** (or `execution`) and a task file. The remaining gap for a **full** code-GRPO *research* setup is **scaled task data**, **held-out discipline**, and **external HumanEval/MBPP evaluation** — see `dream/FULL_GRPO_EXTENSION_PLAN.md` Step 16 and `dream/STATUS.md`.
 
 **Controlled-comparison principle**: for the main Dream code result, keep the following fixed across flat GRPO and entropy-tree GRPO:
 
@@ -1309,8 +1309,8 @@ We want a reward setup that:
   - Use for:
     - the intended next default for serious GRPO runs on Dream in the cloud,
     - benchmarks aligned with our existing execution-lite dataset (subset of HumanEval-like problems).
-  - Current limitation:
-    - the active `dream/scripts/run_dream_comparison.py` runner still uses `SyntaxReward`, so promoting execution-backed reward into the main runner remains part of the next implementation phase.
+  - Runner note:
+    - `run_dream_comparison.py` and `single_step_dream.py` accept **`--reward`**; use **`execution_shaped`** (or `execution` / `execution_lite`) for execution-backed training. **`syntax`** remains the default only when `--reward` is omitted — not the path for benchmark-aligned experiments.
 
 - **LLMEvalReward** (`dream.src.rewards.LLMEvalReward`)
   - Placeholder class that returns 0.0 by default.
@@ -1344,16 +1344,10 @@ We want a reward setup that:
   - Already wired via `data/execution_lite.json`.
   - Use for training and dev evaluation during the transition to full code GRPO (cheaper than full HumanEval harness).
 
-**Current gap**:
+**Current gap (updated 2026-03)**:
 
-- We still do **not** have a canonical Dream-specific code task schema, formatter layer, or train/dev split abstraction.
-- That missing layer is now the main blocker between "Dream GRPO mechanics work" and "full code-GRPO experiments are ready."
-- The detailed implementation path for this gap now lives in `dream/FULL_GRPO_EXTENSION_PLAN.md`:
-  - task schema and registry,
-  - prompt formatting and code extraction,
-  - execution-first reward promotion,
-  - dataset-aware comparison runner,
-  - external benchmark evaluation.
+- **Implemented**: canonical task schema (`dream/src/task_registry.py`), formatter layer (`dream/src/formatting.py`), execution-first reward stack (`dream/src/rewards.py`), dataset-aware runners — see `dream/FULL_GRPO_EXTENSION_PLAN.md` Steps 11–13.
+- **Still open**: **train/dev/eval at scale** (beyond sample JSONL), **HumanEval/MBPP (and optional EvalPlus) evaluation harness** and checkpoint → completion → score pipeline, plus reproducibility extras in Steps 14–17 of the extension plan.
 
 **Prompting templates**:
 
@@ -1396,10 +1390,10 @@ trainer = EntropyMCTSTrainer(model, tokenizer, cfg, reward_fn, optimizer)
 
 **Verification checklist**:
 
-- [ ] SyntaxReward works as a drop-in for the existing minimal trainer test (already covered by `test_trainer_minimal.py`-style usage).
-- [ ] ExecutionLiteReward can be imported and instantiated in a small cloud smoke test (no local heavy execution).
-- [ ] Trainer signature accepts any `RewardFunction` from `dream.src.rewards`.
-- [ ] For cloud GRPO experiments, reward source is clearly recorded in run configs (e.g., `cfg.run_name`, WandB tags).
+- [x] SyntaxReward works as a drop-in for the existing minimal trainer test (covered by `dream/tests/test_trainer_minimal.py`).
+- [x] Execution-backed rewards (`execution_shaped`, etc.) exercised via `build_reward_function` and GPU smoke tests (`dream/STATUS.md`).
+- [x] Trainer signature accepts any callable reward from `dream.src.rewards`.
+- [ ] For cloud GRPO experiments, reward source is always explicit in logs/WandB (partially: `run_dream_comparison.py` logs `reward=` and WandB `reward_name`; full config dump TBD per extension plan Step 17).
 
 **Dependencies**: Steps 1–10 (for full Dream usage); for local-only work, just Steps 1–7 and this reward design.
 
@@ -1409,7 +1403,7 @@ trainer = EntropyMCTSTrainer(model, tokenizer, cfg, reward_fn, optimizer)
 
 **Objective**: Get standard trajectory-level GRPO (no tree) working on Dream as the comparison baseline.
 
-**File**: Part of `dream/src/trainer.py` (BaselineGRPOTrainer, to be added later)
+**File**: `dream/src/trainer.py` (`BaselineGRPOTrainer` implemented)
 
 ### Specification
 
@@ -1427,9 +1421,9 @@ Use Dream's `diffusion_generate` with `output_history=True` to extract transitio
 
 ### Verification
 
-- [ ] Baseline GRPO runs for 10 steps without crash
-- [ ] Loss decreases over 10 steps
-- [ ] Generated completions are coherent code
+- [x] Baseline GRPO runs without crash on GPU (short `grpo_lora_baseline` smoke with dataset + `execution_shaped`; see `dream/STATUS.md`).
+- [ ] Loss decreases meaningfully over many steps (not required for bring-up smoke).
+- [ ] Generated completions are coherent code under scaled training (TBD).
 
 **Dependencies**: Steps 1–11.
 
@@ -1472,7 +1466,7 @@ Do not treat this step as complete until the following are true:
 - the comparison runner is dataset-aware rather than driven by a short handwritten prompt list,
 - external evaluation can run from saved checkpoints without editing training code.
 
-These are now spelled out in more detail in `dream/FULL_GRPO_EXTENSION_PLAN.md`.
+**Progress (2026-03)**: The first three bullets are **met for bring-up** (execution-shaped rewards, shared formatting via `task_registry` / `formatting`, dataset-aware runner). **External HumanEval/MBPP eval from checkpoints** is the remaining gate — next work is Step 16 in `dream/FULL_GRPO_EXTENSION_PLAN.md` and `dream/STATUS.md`.
 
 ### Reference Numbers
 

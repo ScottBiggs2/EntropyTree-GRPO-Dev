@@ -14,6 +14,12 @@ Use this directory when:
 
 The original MDLM stack in `src/` remains the reference baseline.
 
+### Current status (2026-03)
+
+- **Done for code GRPO bring-up**: `CodeTask` schema + loaders (`task_registry.py`), formatting/extraction (`formatting.py`), execution-first rewards (`rewards.py` + `build_reward_function`), dataset-aware `single_step_dream.py` and `run_dream_comparison.py`, diversity metrics (`observability.py`), sample data under `dream/data/`.
+- **Validated on GPU**: at least one **tree** single-step and one **flat** `grpo_lora_baseline` run with `--reward execution_shaped` and a JSONL dataset.
+- **Next**: **HumanEval + MBPP** evaluation from checkpoints (export → generate → extract → test), plus larger train/dev data as needed — see **`dream/STATUS.md`** and Step 16 in **`dream/FULL_GRPO_EXTENSION_PLAN.md`**.
+
 ---
 
 ```bash 
@@ -70,12 +76,7 @@ dream/
 │   ├── check_reward_pipeline.py # Task/reward smoke test (no Dream weights)
 │   ├── extract_dataset_prompt.py # Print canonical_prompt for legacy --prompt workflows
 │   └── run_dream_comparison.py # WandB arms: initial eval, MCTS-GRPO, flat LoRA / optional dense GRPO, adaptive
-└── tests/
-    ├── __init__.py
-    ├── test_entropy_corrected.py
-    ├── test_time_weight_interval.py
-    ├── test_model_adapter.py
-    └── test_trainer_minimal.py
+└── tests/            # includes task_registry, formatting, rewards, observability, trainer minimal, …
 ```
 
 ---

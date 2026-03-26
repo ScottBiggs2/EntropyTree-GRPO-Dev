@@ -2,7 +2,7 @@
 
 **Project**: Entropy-Guided MCTS-GRPO for Diffusion Language Models  
 **Scope**: Extend the current `dream/` stack from corrected tree mechanics plus light code smoke tests into a fuller, DiffuCoder-aligned GRPO setting for code generation.  
-**Status**: Planning document only. Research choices that materially affect the experimental claim should remain open for user review in `research_decisions.md`.
+**Status**: Steps 11–13 **implemented** in code (schema, formatting, execution-first rewards, dataset-aware runners); GPU smoke tests passed (tree single-step + flat GRPO with `execution_shaped`). Steps 14–18 **partial or pending** — see **Current-State Summary** below. Research choices remain in `research_decisions.md`.
 
 ---
 
@@ -14,13 +14,12 @@ The current `dream/` stack is already beyond a toy prototype in several importan
 - There is both a tree trainer and a flat trajectory GRPO baseline.
 - Cloud validation scripts exist for Dream loading, tree building, and one-step training.
 
-But the current training loop is still closer to a **mechanics validation setup** than to a **full code GRPO research setting**:
+As of 2026-03, the training loop can run **execution-shaped, dataset-backed** GRPO on GPU (`--dataset`, `--reward execution_shaped`), but a **full research comparison** still needs larger task sources, held-out discipline, and **external** HumanEval/MBPP eval (Step 16).
 
-- `dream/scripts/run_dream_comparison.py` currently uses `SyntaxReward`, not an execution-first code reward.
-- Prompt inputs are a short hand-written list, not a real train/dev/test task source.
-- `ExecutionLiteReward` exists, but only as a lightweight bridge to the older prompt-to-tests registry.
-- There is no Dream-specific dataset schema, formatter layer, or full evaluation harness for HumanEval / MBPP / EvalPlus-style reporting.
-- Optional LLM-as-a-judge is only a placeholder and should not become a silent confound.
+- `run_dream_comparison.py` / `single_step_dream.py` support CLI-selected rewards (not syntax-only by default when configured).
+- Task loading can use JSONL + `task_registry` or legacy `execution_lite`-compatible data; sample files live under `dream/data/`.
+- **Remaining gap**: standard **benchmark** evaluation (HumanEval, MBPP, optional EvalPlus) as separate scripts from training — see Step 16 and `dream/STATUS.md` next steps.
+- Optional LLM-as-a-judge remains a placeholder; keep it out of the headline path until execution-only results are stable.
 
 This document defines a concrete plan for extending `dream/DEVELOPMENT_PLAN.md` and for identifying which new open questions should be sent to `research_decisions.md`.
 
@@ -69,21 +68,23 @@ If a choice affects the scientific interpretation, do not bury it in code defaul
 ### Already in place
 
 - `dream/src/config.py`: Dream-aware config with adaptive stepping, LoRA, grouped loss, and corrected normalization switches.
-- `dream/src/trainer.py`: `EntropyMCTSTrainer` and `BaselineGRPOTrainer`.
+- `dream/src/trainer.py`: `EntropyMCTSTrainer` and `BaselineGRPOTrainer` (diversity metrics from `observability.py`).
 - `dream/src/loss.py`: interval-aware time weighting and corrected entropy weighting.
-- `dream/src/rewards.py`: `SyntaxReward`, `ExecutionLiteReward`, `LLMEvalReward` placeholder.
-- `dream/scripts/validate_dream.py`, `dream/scripts/validate_dream_tree.py`, `dream/scripts/single_step_dream.py`: Dream smoke-test ladder.
-- `dream/scripts/run_dream_comparison.py`: basic comparison runner with tree and flat GRPO arms.
+- `dream/src/rewards.py`: layered rewards (`CodeFormatReward`, execution stack, `build_reward_function`), `SyntaxReward` for smoke tests, judge placeholder.
+- `dream/src/task_registry.py`, `dream/src/formatting.py`: canonical tasks + prompt/code extraction.
+- `dream/scripts/validate_dream.py`, `validate_dream_tree.py`, `single_step_dream.py`: smoke-test ladder; single-step supports `--dataset` / `--reward`.
+- `dream/scripts/run_dream_comparison.py`: dataset-aware phases (tree + flat GRPO arms), `--dataset`, `--reward`, etc.
+- `dream/scripts/check_reward_pipeline.py`, `dream/data/*.sample.jsonl`: local verification without full model load.
+- **GPU validated**: tree one-step + flat `grpo_lora_baseline` with `execution_shaped` on sample JSONL (see `dream/STATUS.md`).
 
 ### Main gaps to close
 
-- no canonical Dream code-task dataset format;
-- no formatter layer that standardizes prompt construction and code extraction;
-- no execution-first reward as the default Dream comparison path;
-- no explicit separation between train/dev/eval registries;
-- no external evaluation scripts for HumanEval / MBPP / EvalPlus;
-- no reproducible experiment matrix tying together tree, flat baseline, reward source, and evaluation;
-- no real judge integration, only a stub.
+- **Step 16 (next priority)**: external evaluation harness for **HumanEval** and **MBPP** (export completions, extract code, run official or EvalPlus tests); optional `dream/docs/EVAL_PROTOCOL.md`.
+- **Data at scale**: train/dev JSONL beyond samples; explicit eval-only holdout for benchmark tasks (research decision in `research_decisions.md`).
+- **Steps 14–15**: deeper flat baseline / tree parity logging, degenerate-batch handling, optional dedicated tests (`test_baseline_grpo_code.py`, etc.).
+- **Step 17**: run metadata (git commit, dataset hash), `EXPERIMENT_MATRIX.md`-style documentation.
+- **Step 13 (optional)**: `execution_backends.py` for non-local sandboxes (E2B, etc.); not required for standard HumanEval/MBPP harnesses.
+- **Step 18**: judge integration — stub only; keep opt-in.
 
 ---
 
@@ -556,7 +557,7 @@ The stack should count as "full GRPO ready" only when all of the following are t
 - HumanEval or MBPP evaluation can be run from saved checkpoints.
 - `run_dream_comparison.py` can launch the primary comparison arms without manual code edits.
 
-Until then, the stack is still a strong prototype, but not yet a fair research comparison setup.
+**As of 2026-03-26**: the first, third, and last bullets are **satisfied for bring-up** (same sample dataset, shared formatter/reward path, CLI-driven runner). The **dev-split discipline**, **HumanEval/MBPP eval from checkpoints**, and **scaled training data** are **not** done — that is the current frontier before calling the milestone “complete.”
 
 ---
 
