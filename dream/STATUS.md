@@ -38,7 +38,9 @@ Updated: 2026-03-23
 
 ## What Needs HPC / GPU
 
-The following should be run by the user on HPC/GPU:
+If the cluster’s `python dream/scripts/single_step_dream.py -h` does **not** show `--dataset` and `--reward`, that clone is **behind** the code-GRPO CLI — see **`dream/HPC_SYNC.md`** before re-running commands.
+
+The following should be run by the user on HPC/GPU (after sync):
 
 ### 1. One real single-step code-GRPO smoke test
 
@@ -84,7 +86,16 @@ What good looks like:
 
 ### 3. Updated multi-arm comparison run
 
-The shell script still needs to be pointed at the desired dataset/reward mode when launching the real code-GRPO comparison. If using the Python runner directly, use:
+The shell script still needs to be pointed at the desired dataset/reward mode when launching the real code-GRPO comparison. If using the Python runner directly, use the command below (`run_dream_comparison.py` uses **underscores** for `--max_tree_nodes` / `--max_new_tokens`, not the hyphenated names from `single_step_dream.py`).
+
+If an HPC checkout rejects any of these flags, verify the actual parser first with:
+
+```bash
+python dream/scripts/single_step_dream.py -h
+python dream/scripts/run_dream_comparison.py -h
+```
+
+Then run:
 
 ```bash
 python dream/scripts/run_dream_comparison.py \
@@ -94,8 +105,11 @@ python dream/scripts/run_dream_comparison.py \
   --dataset-split train \
   --reward execution_shaped \
   --lora \
-  --max-tree-nodes 8 \
-  --max-new-tokens 96
+  --max-tasks 2 \
+  --num_epochs 1 \
+  --max_tree_nodes 8 \
+  --max_new_tokens 96 \
+  --no_wandb
 ```
 
 ## Current Recommendation

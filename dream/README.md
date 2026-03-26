@@ -42,6 +42,7 @@ srun --partition=gpu --nodes=1 --pty --gres=gpu:1 --ntasks=1 --mem=32GB --time=1
 dream/
 ├── DEVELOPMENT_PLAN.md   # Detailed step-by-step migration plan
 ├── STATUS.md             # What is implemented vs what still needs GPU/eval work
+├── HPC_SYNC.md           # If HPC rejects --dataset/--reward: stale clone; how to sync
 ├── README.md             # This file
 ├── src/
 │   ├── __init__.py
@@ -67,6 +68,7 @@ dream/
 │   ├── validate_dream_tree.py # Small real tree (fixed or adaptive stepping; optional LoRA)
 │   ├── single_step_dream.py   # One training step (LoRA, adaptive flags, etc.)
 │   ├── check_reward_pipeline.py # Task/reward smoke test (no Dream weights)
+│   ├── extract_dataset_prompt.py # Print canonical_prompt for legacy --prompt workflows
 │   └── run_dream_comparison.py # WandB arms: initial eval, MCTS-GRPO, flat LoRA / optional dense GRPO, adaptive
 └── tests/
     ├── __init__.py
@@ -124,6 +126,64 @@ Use **repo root** (`cd` to the directory that contains `dream/`). Install deps o
 pip install -r dream/requirements.txt
 ```
 
+#### Stale clone check (read this first on HPC)
+
+If you see `unrecognized arguments: --dataset ...` or `--reward ...`, your **`single_step_dream.py` / `run_dream_comparison.py` are an older revision** than the code-GRPO CLI. **No flag spelling will fix that** — update the repo or copy the current `dream/scripts/` and `dream/src/` files from the machine that has the latest commits. Step-by-step: `dream/HPC_SYNC.md`.
+
+Sanity check:
+
+```bash
+python dream/scripts/single_step_dream.py -h 2>&1 | grep -E 'dataset|reward' || echo "STALE: missing dataset/reward CLI — sync per dream/HPC_SYNC.md"
+```
+
+Always call scripts as `python dream/scripts/...` (a bare `dream/scripts/foo.py` may hit “Permission denied” if the file is not executable).
+
+#### CLI flag naming (after you have a current `-h`)
+
+`argparse` names differ between entrypoints. Do **not** copy tree/budget flags from `single_step_dream.py` into `run_dream_comparison.py` (or vice versa):
+
+- **`dream/scripts/single_step_dream.py`**, **`validate_dream_tree.py`**: hyphenated flags, e.g. `--max-tree-nodes`, `--max-new-tokens`, `--steps-per-expansion`.
+- **`dream/scripts/run_dream_comparison.py`**: underscore flags for the same knobs, e.g. `--max_tree_nodes`, `--max_new_tokens`, `--steps_per_expansion`, `--branch_width`, `--num_epochs`.
+
+Dataset and reward flags exist only on **current** scripts: `--dataset`, `--dataset-split`, `--reward`, `--max-tasks` (comparison runner only), `--reward-timeout`.
+
+If anything still fails, run `python dream/scripts/<script>.py -h` on **that** checkout and copy flags verbatim from the help text.
+
+#### Legacy fallback (old `-h` without `--dataset` / `--reward`)
+
+You can still smoke-test the **training loop** with the **default prompt** or a **file-backed prompt**, but **`execution_shaped` and dataset-backed rewards require the updated scripts**.
+
+1. Put one prompt per line in a text file (or use `dream/scripts/extract_dataset_prompt.py` to print one `canonical_prompt` from a JSONL row).
+2. Single-step style (only flags your `-h` actually lists), e.g.:
+
+```bash
+python dream/scripts/extract_dataset_prompt.py dream/data/code_grpo_train.sample.jsonl 0 --split train > /tmp/dream_prompt.txt
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+python dream/scripts/single_step_dream.py \
+  --lora --profile-memory \
+  --max-tree-nodes 5 --max-new-tokens 96 --steps-per-expansion 12 \
+  --prompt "$(cat /tmp/dream_prompt.txt)"
+```
+
+3. Comparison runner without `--dataset`: use `--prompts_file path/to/prompts_one_per_line.txt` plus the underscore tree flags your `-h` shows. You will **not** get execution-shaped scoring until you sync.
+
+**Example — flat LoRA GRPO smoke (no WandB):**
+
+```bash
+python dream/scripts/run_dream_comparison.py \
+  --phase grpo_lora_baseline \
+  --device cuda \
+  --dataset dream/data/code_grpo_train.sample.jsonl \
+  --dataset-split train \
+  --reward execution_shaped \
+  --lora \
+  --max-tasks 2 \
+  --num_epochs 1 \
+  --max_tree_nodes 8 \
+  --max_new_tokens 96 \
+  --no_wandb
+```
+
 | Step | Command | What “good” looks like | Status |
 |------|---------|------------------------|--------|
 | **1 — Unit tests** (no GPU) | `python -m pytest dream/tests -q` | All pass | All pass! |
@@ -147,7 +207,7 @@ pip install -r dream/requirements.txt
 
 **WandB layout:** metrics are logged with **shared names** across arms (`loss`, `avg_reward`, `wall_sec_step`, `epoch_mean_*`, …), similar to `scripts/run_experiment_2.py`, so in the UI you can select the whole **group** and compare runs on the **same charts**. Per-step logs include all numeric trainer fields; job logs print the full metric line. Default prompt list has **10** short code tasks; override with `--prompts_file`. Use `--wandb_prefixed_keys` if you prefer separate `phase/metric` charts.
 
-Shared flags: `--wandb_group` (script sets to `dream_cmp_$SLURM_JOB_ID`), `--run_name`, `--lora`, tree limits, `--dataset`, `--dataset-split`, and `--reward`. In the Slurm wrapper, set `DATASET=...`, `DATASET_SPLIT=...`, `REWARD=execution_shaped` as needed. **Checkpoints are off by default** (W&B metrics only). To save `.pt` files, pass **`--save-checkpoints`** and optionally **`--checkpoint-dir`** (Slurm: `SAVE_CHECKPOINTS=1`, default root **`/scratch/biggs.s/entropy_tree_grpo_dream`**, override with `CHECKPOINT_DIR`). Periodic saves: `SAVE_EVERY` / `--save-every-steps`. Override budget via env vars (`NUM_EPOCHS`, `MAX_TREE_NODES`, …). Dry run without WandB: add `--no_wandb` to each Python invocation (edit script or call Python directly).
+Shared concepts: `--wandb_group` (script sets to `dream_cmp_$SLURM_JOB_ID`), `--run_name`, `--lora`, `--dataset`, `--dataset-split`, `--reward`. Tree limits on **`run_dream_comparison.py`** use underscores (`--max_tree_nodes`, `--max_new_tokens`, …); see **CLI flag naming** above. In the Slurm wrapper, set `DATASET=...`, `DATASET_SPLIT=...`, `REWARD=execution_shaped` as needed. **Checkpoints are off by default** (W&B metrics only). To save `.pt` files, pass **`--save-checkpoints`** and optionally **`--checkpoint-dir`** (Slurm: `SAVE_CHECKPOINTS=1`, default root **`/scratch/biggs.s/entropy_tree_grpo_dream`**, override with `CHECKPOINT_DIR`). Periodic saves: `SAVE_EVERY` / `--save-every-steps`. Override budget via env vars (`NUM_EPOCHS`, `MAX_TREE_NODES`, …). Dry run without WandB: add `--no_wandb` to each Python invocation (edit script or call Python directly).
 
 **Slurm / conda:** `run_dream_comparison.sh` uses the **same conda pattern as `run_experiment_2.sh`**: source `$HOME/miniconda/etc/profile.d/conda.sh` (then `miniconda3`, then `anaconda3`), then **`conda activate EntropyTreeGRPO_Dream_env`**. Your `conda info --base` is often **`~/miniconda`**, not `~/miniconda3` — that path is checked first. Then **`python -m pip install -r dream/requirements.txt`**. If you see `torchvision::nms` or Python **3.13**, the wrong interpreter was used.
 
