@@ -24,8 +24,33 @@ from dream.src.eval_dataset_convert import (  # noqa: E402
 
 def _load_tasks_evalplus() -> Dict[str, Mapping[str, Any]]:
     from evalplus.data import get_mbpp_plus
+    from evalplus.data.mbpp import get_mbpp
 
-    return get_mbpp_plus()
+    plus = get_mbpp_plus()
+
+    # get_mbpp_plus() has base_input/plus_input but NOT test_list or test.
+    # The original sanitized MBPP (get_mbpp()) has test_list with assertion
+    # strings.  Merge them so mbpp_to_row can extract assertions.
+    original = get_mbpp()
+    merged = 0
+    for task_id, task in plus.items():
+        if task.get("test_list"):
+            continue
+        num = task_id.split("/")[-1] if "/" in task_id else task_id
+        orig = original.get(num) or original.get(task_id)
+        if orig and orig.get("test_list"):
+            task["test_list"] = orig["test_list"]
+            if not task.get("code") and orig.get("code"):
+                task["code"] = orig["code"]
+            if not task.get("text") and orig.get("text"):
+                task["text"] = orig["text"]
+            merged += 1
+
+    first_key = next(iter(plus), None)
+    if first_key:
+        print(f"MBPP+ sample keys ({first_key}): {sorted(plus[first_key].keys())}")
+    print(f"Merged test_list from sanitized MBPP for {merged}/{len(plus)} tasks")
+    return plus
 
 
 def _load_tasks_from_jsonl(path: Path) -> List[Mapping[str, Any]]:
