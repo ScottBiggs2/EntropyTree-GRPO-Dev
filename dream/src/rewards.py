@@ -134,6 +134,9 @@ class ExecutionReward(_TaskBackedReward):
         starter_code = getattr(task, "starter_code", None) or task.get("starter_code", "")
         func_name = getattr(task, "entry_point", None) or task.get("entry_point")
         tests = getattr(task, "tests", None) or task.get("tests", [])
+        test_format = getattr(task, "test_format", None) or task.get(
+            "test_format", "args_expected"
+        )
         return run_tests(
             prompt=starter_code,
             completion=code,
@@ -141,6 +144,7 @@ class ExecutionReward(_TaskBackedReward):
             tests=tests,
             timeout=self.timeout,
             project_root=self.project_root,
+            test_format=test_format,
         )
 
 
@@ -159,6 +163,9 @@ class ExecutionShapedReward(ExecutionReward):
         starter_code = getattr(task, "starter_code", None) or task.get("starter_code", "")
         func_name = getattr(task, "entry_point", None) or task.get("entry_point")
         tests = getattr(task, "tests", None) or task.get("tests", [])
+        test_format = getattr(task, "test_format", None) or task.get(
+            "test_format", "args_expected"
+        )
         frac = run_tests(
             prompt=starter_code,
             completion=code,
@@ -166,6 +173,7 @@ class ExecutionShapedReward(ExecutionReward):
             tests=tests,
             timeout=self.timeout,
             project_root=self.project_root,
+            test_format=test_format,
         )
         if frac >= 1.0:
             return 1.0

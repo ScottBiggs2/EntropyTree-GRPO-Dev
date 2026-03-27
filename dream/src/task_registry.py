@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
 
 
 @dataclass(frozen=True)
@@ -25,10 +25,12 @@ class CodeTask:
     instruction: str
     starter_code: str
     entry_point: str
-    tests: List[List[Any]]
+    # args_expected: list of [arg..., expected]; assertion: list of assertion strings
+    tests: Union[List[List[Any]], List[str]]
     canonical_prompt: str
     language: str = "python"
     prompt_type: str = "chat_code"
+    test_format: str = "args_expected"
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -46,6 +48,20 @@ def _coerce_tests(raw_tests: Any) -> List[List[Any]]:
         if len(row) < 2:
             raise ValueError("each test case must contain args and expected value")
         out.append(row)
+    return out
+
+
+def _coerce_assertion_tests(raw_tests: Any) -> List[str]:
+    if not isinstance(raw_tests, list) or not raw_tests:
+        raise ValueError("tests must be a non-empty list of assertion strings")
+    out: List[str] = []
+    for item in raw_tests:
+        if not isinstance(item, str):
+            raise ValueError("each assertion test must be a string")
+        s = item.strip()
+        if not s.lower().startswith("assert"):
+            raise ValueError("each assertion test must start with 'assert'")
+        out.append(s)
     return out
 
 
@@ -83,7 +99,11 @@ def _task_from_standard_row(
     ).strip()
     language = str(row.get("language") or "python")
     prompt_type = str(row.get("prompt_type") or "chat_code")
-    tests = _coerce_tests(row.get("tests"))
+    test_format = str(row.get("test_format") or "args_expected").strip()
+    if test_format == "assertion":
+        tests = _coerce_assertion_tests(row.get("tests"))
+    else:
+        tests = _coerce_tests(row.get("tests"))
     canonical_prompt = str(
         row.get("canonical_prompt") or _build_prompt(instruction, starter_code, language)
     ).strip()
@@ -99,6 +119,7 @@ def _task_from_standard_row(
         canonical_prompt=canonical_prompt,
         language=language,
         prompt_type=prompt_type,
+        test_format=test_format,
         metadata=metadata,
     )
 
@@ -137,6 +158,7 @@ def _task_from_legacy_execution_lite(
         canonical_prompt=canonical_prompt,
         language="python",
         prompt_type="chat_code",
+        test_format="args_expected",
         metadata=metadata,
     )
 
@@ -245,6 +267,7 @@ def export_execution_lite_rows(tasks: Iterable[CodeTask]) -> List[Dict[str, Any]
                 "instruction": task.instruction,
                 "function_name": task.entry_point,
                 "tests": task.tests,
+                "test_format": task.test_format,
                 "eval": task.split.lower() in {"dev", "eval", "test"},
                 "metadata": task.metadata,
             }

@@ -26,7 +26,7 @@ This plan is designed for coding agents to execute step-by-step. Each step has:
 
 ```
 dream/
-├── DEVELOPMENT_PLAN.md          # This file
+├── PLAN_01_CORE_MIGRATION.md    # This file
 ├── requirements.txt             # Dream-specific pinned dependencies
 ├── src/
 │   ├── __init__.py
@@ -1252,7 +1252,7 @@ optimizer.step()
 
 **Objective**: Design a concrete GRPO configuration for code generation, inspired by DiffuCoder and compatible with both Dream and the entropy-tree method. This covers reward design, datasets, and judge options (including an optional LLM-as-a-judge with fallbacks).
 
-**Status note (2026-03-26)**: Core Dream tree / loss / baseline mechanics are in place, and **`run_dream_comparison.py` / `single_step_dream.py` support CLI-selected rewards** (e.g. `--reward execution_shaped`) with **dataset-backed** prompts via `--dataset`. Default reward name may still be `syntax` if you omit `--reward`; for real code RL on GPU, pass **`execution_shaped`** (or `execution`) and a task file. The remaining gap for a **full** code-GRPO *research* setup is **scaled task data**, **held-out discipline**, and **external HumanEval/MBPP evaluation** — see `dream/FULL_GRPO_EXTENSION_PLAN.md` Step 16 and `dream/STATUS.md`.
+**Status note (2026-03-26)**: Core Dream tree / loss / baseline mechanics are in place, and **`run_dream_comparison.py` / `single_step_dream.py` support CLI-selected rewards** (e.g. `--reward execution_shaped`) with **dataset-backed** prompts via `--dataset`. Default reward name may still be `syntax` if you omit `--reward`; for real code RL on GPU, pass **`execution_shaped`** (or `execution`) and a task file. The remaining gap for a **full** code-GRPO *research* setup is **scaled task data**, **held-out discipline**, and **external HumanEval/MBPP evaluation** — see `dream/PLAN_02_GRPO_EXTENSION.md` Step 16 and `dream/STATUS.md`.
 
 **Controlled-comparison principle**: for the main Dream code result, keep the following fixed across flat GRPO and entropy-tree GRPO:
 
@@ -1346,7 +1346,7 @@ We want a reward setup that:
 
 **Current gap (updated 2026-03)**:
 
-- **Implemented**: canonical task schema (`dream/src/task_registry.py`), formatter layer (`dream/src/formatting.py`), execution-first reward stack (`dream/src/rewards.py`), dataset-aware runners — see `dream/FULL_GRPO_EXTENSION_PLAN.md` Steps 11–13.
+- **Implemented**: canonical task schema (`dream/src/task_registry.py`), formatter layer (`dream/src/formatting.py`), execution-first reward stack (`dream/src/rewards.py`), dataset-aware runners — see `dream/PLAN_02_GRPO_EXTENSION.md` Steps 11–13.
 - **Still open**: **train/dev/eval at scale** (beyond sample JSONL), **HumanEval/MBPP (and optional EvalPlus) evaluation harness** and checkpoint → completion → score pipeline, plus reproducibility extras in Steps 14–17 of the extension plan.
 
 **Prompting templates**:
@@ -1466,7 +1466,7 @@ Do not treat this step as complete until the following are true:
 - the comparison runner is dataset-aware rather than driven by a short handwritten prompt list,
 - external evaluation can run from saved checkpoints without editing training code.
 
-**Progress (2026-03)**: The first three bullets are **met for bring-up** (execution-shaped rewards, shared formatting via `task_registry` / `formatting`, dataset-aware runner). **External HumanEval/MBPP eval from checkpoints** is the remaining gate — next work is Step 16 in `dream/FULL_GRPO_EXTENSION_PLAN.md` and `dream/STATUS.md`.
+**Progress (2026-03)**: The first three bullets are **met for bring-up** (execution-shaped rewards, shared formatting via `task_registry` / `formatting`, dataset-aware runner). **External HumanEval/MBPP eval from checkpoints** is the remaining gate — next work is Step 16 in `dream/PLAN_02_GRPO_EXTENSION.md` and `dream/STATUS.md`.
 
 ### Reference Numbers
 

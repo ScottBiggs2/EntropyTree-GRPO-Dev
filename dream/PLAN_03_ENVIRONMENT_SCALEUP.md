@@ -3,7 +3,7 @@
 **Project**: Entropy-Guided MCTS-GRPO for Diffusion Language Models  
 **Scope**: Scale Dream GRPO from 3-task smoke test to production-grade training + evaluation  
 **Created**: 2026-03-26  
-**Status**: Planning
+**Status**: In progress — Step 1 **partial**: `dream/sandbox/Dockerfile` and `dream/sandbox/entrypoint.py` implemented (delegation slice); `dream/sandbox/README.md`, `dream/src/execution_backends.py`, reward wiring, and `dream/tests/test_execution_backends.py` **pending**. Step 4 **partial** (delegation): `dream/docs/EVAL_PROTOCOL.md` **done**; `dream/scripts/eval_humaneval.py` and `dream/scripts/eval_mbpp.py` **pending** (see [Needs careful attention](#needs-careful-attention-do-yourself-or-review-closely)). See [Step 1 implementation status and verification](#step-1-implementation-status-and-verification).
 
 ---
 
@@ -21,6 +21,7 @@
 10. [Research Decisions](#research-decisions)
 11. [Delegation Guide](#delegation-guide)
 12. [External Resources](#external-resources)
+13. [Step 1 implementation status and verification](#step-1-implementation-status-and-verification)
 
 ---
 
@@ -92,10 +93,10 @@ Build a Docker image that runs untrusted Python code safely, callable from the r
 
 ### Files to create
 
-- `dream/sandbox/Dockerfile`
-- `dream/sandbox/entrypoint.py`
-- `dream/sandbox/README.md`
-- `dream/src/execution_backends.py`
+- `dream/sandbox/Dockerfile` *(done — see [implementation status](#step-1-implementation-status-and-verification))*
+- `dream/sandbox/entrypoint.py` *(done)*
+- `dream/sandbox/README.md` *(pending)*
+- `dream/src/execution_backends.py` *(pending)*
 
 ### Docker image design
 
@@ -193,6 +194,62 @@ RESULT=$(echo '{"code": "import urllib.request; urllib.request.urlopen(\"http://
 # Test 6: Unit test for ExecutionBackend
 python -m pytest dream/tests/test_execution_backends.py -q
 ```
+
+### Step 1 implementation status and verification
+
+#### Implementation status
+
+| Artifact | Status |
+|---|---|
+| `dream/sandbox/Dockerfile` | **Done** — `python:3.11-slim`, `ENTRYPOINT` runs `python -u /entrypoint.py`. |
+| `dream/sandbox/entrypoint.py` | **Done** — JSON from **stdin** (no args) or **file path** in `sys.argv[1]` (Apptainer-friendly). `test_format`: **`assertion`** (`test_cases`) and **`args_expected`** (`function_name`, `tests`; row shape matches `scripts/run_execution_sandbox.py`). Infers format from keys if `test_format` omitted. Per-test timeout: `DREAM_SANDBOX_TEST_TIMEOUT` (default `5` seconds). |
+| `dream/sandbox/README.md` | **Pending** |
+| `dream/src/execution_backends.py` | **Pending** — `SubprocessBackend` / `ContainerBackend`; see [Delegation Guide](#delegation-guide) (“needs careful attention”). |
+| `dream/src/rewards.py` integration | **Pending** — optional `backend` on `ExecutionShapedReward` / `build_reward_function()`. |
+| `dream/tests/test_execution_backends.py` | **Pending** — blocked until `execution_backends.py` exists. |
+
+#### Verification on a machine with Docker (local or remote login node)
+
+From the repository root, with the Docker daemon running:
+
+1. **Build** the image:
+
+   ```bash
+   docker build -t dream-sandbox:latest dream/sandbox/
+   ```
+
+2. **Run** the [Automatic test conditions](#automatic-test-conditions) block above (Tests 1–5). Interpret results as follows:
+
+   - **Tests 2–3** (known-good code): stdout must be exactly **`1.0`** (single line).
+   - **Test 4** (`"tests": [[]]`): expect **`0.0`** without hanging — the inner row is skipped under the same rules as `run_execution_sandbox.py`, so this is a weak “timeout” smoke check unless the payload is extended to invoke a hanging function with valid rows.
+   - **Test 5** (network): expect **`0.0`** only when **`--network=none`** is used. If the host allows outbound HTTP, `exec(code)` may succeed and **`1.0`** can appear instead — that is **not** a failed build, only weaker isolation than Docker provides.
+   - **Test 6**: passes only after `execution_backends.py` and tests exist.
+
+3. **macOS:** GNU **`timeout`** is often missing; install **`gtimeout`** (Homebrew `coreutils`) or run Test 4 without an outer `timeout` (the `[[]]` case should still return quickly).
+
+4. **Without Docker** (sanity check that `entrypoint.py` runs on the host Python):
+
+   ```bash
+   echo '{"code":"def add(a,b): return a+b","test_cases":["assert add(1,2)==3"],"test_format":"assertion"}' | python dream/sandbox/entrypoint.py
+   ```
+
+   Expect **`1.0`**.
+
+#### Verification on HPC (Apptainer; Docker usually absent)
+
+Build or pull a **`.sif`** from the same image (e.g. push `dream-sandbox:latest` to a registry from a machine with Docker, then `apptainer pull` on the cluster). Use project or scratch for `APPTAINER_CACHEDIR` / `APPTAINER_TMPDIR` per site docs ([Explorer Apptainer](https://rc-docs.northeastern.edu/en/explorer-main/containers/apptainer.html)).
+
+If **stdin** to the container is unreliable under `apptainer exec --contain`, pass a **bind-mounted JSON file** (matches `entrypoint.py` `argv[1]` mode):
+
+```bash
+mkdir -p /tmp/task
+echo '{"code":"def add(a,b): return a+b","test_cases":["assert add(1,2)==3"],"test_format":"assertion"}' > /tmp/task/config.json
+apptainer exec --contain --net --network none --no-home \
+  -B /tmp/task:/task:ro /path/to/dream-sandbox.sif \
+  python /entrypoint.py /task/config.json
+```
+
+Expect **`1.0`**. If `--network none` is unsupported on a node, use the fallback in [Likely failure modes and fallbacks](#likely-failure-modes-and-fallbacks). Training jobs can set `DREAM_SANDBOX_RUNTIME=apptainer` and `DREAM_SANDBOX_SIF=...` once `ContainerBackend` exists ([HPC-specific](#hpc-specific-apptainer-on-explorer)).
 
 ### Likely failure modes and fallbacks
 
@@ -307,8 +364,11 @@ Convert HumanEval (164 tasks) and MBPP (378+ tasks after v0.2.0 cleanup) into `C
 
 - `dream/scripts/convert_humaneval.py`
 - `dream/scripts/convert_mbpp.py`
+- `dream/src/eval_dataset_convert.py` (shared parsing + `CodeTask` row builders)
 - `dream/data/humaneval.jsonl` (gitignored)
 - `dream/data/mbpp.jsonl` (gitignored)
+
+**Status**: Implemented — converters default to EvalPlus (`pip install evalplus`) or accept `--input` (HumanEval/MBPP JSONL). Offline unit tests: `pytest dream/tests/test_convert_eval_datasets.py`.
 
 ### Sources
 
@@ -347,6 +407,17 @@ print(f'PASS: {len(tasks)} MBPP tasks, all eval split')
 "
 ```
 
+### Laptop vs HPC verification
+
+Development machines often lack `evalplus` or a full GPU stack; **Explorer HPC** is the authoritative environment for training and long eval runs. Use this split:
+
+| Where | What to run |
+|---|---|
+| **Laptop / CI** | `pytest dream/tests/test_convert_eval_datasets.py` (no Hub, no `evalplus`). Optionally `pip install evalplus` and run the conversion commands above to confirm **164** HumanEval rows and **≥374** MBPP rows. |
+| **HPC (rigorous)** | In the project venv used for training: `pip install evalplus`, re-run `convert_humaneval.py` / `convert_mbpp.py`, assert counts as in the snippets above. Optionally spot-check execution: load a few tasks from `humaneval.jsonl` and run `dream/scripts/check_reward_pipeline.py` (or the container backend from Step 1 once wired) so assertion strings execute under the same Python/sandbox as production. |
+
+If laptop and HPC counts diverge, compare `evalplus` versions (`pip show evalplus`) and ensure both sides use the same `--input` file when not pulling from the EvalPlus API.
+
 ### Likely failure modes and fallbacks
 
 | Failure mode | Symptom | Fallback |
@@ -367,7 +438,7 @@ Build evaluation scripts that generate completions from a Dream checkpoint and s
 
 - `dream/scripts/eval_humaneval.py`
 - `dream/scripts/eval_mbpp.py`
-- `dream/docs/EVAL_PROTOCOL.md`
+- `dream/docs/EVAL_PROTOCOL.md` *(done — normative prompt/generation/EvalPlus contract aligned with `formatting.py`, `task_registry.py`, `validate_dream.py`)*
 
 ### Design
 
@@ -407,6 +478,10 @@ Following DiffuCoder's inference examples:
 - `max_new_tokens=512`, `steps=512` (TOKEN_PER_STEP=1)
 
 These should be CLI-configurable and documented in `EVAL_PROTOCOL.md`.
+
+### Verification (laptop vs HPC)
+
+Step 4 work is often drafted on a **laptop** without loading Dream 7B or scoring full benchmarks. That is sufficient to align prompts and APIs with source code, **not** to validate reportable pass@1 / pass@10. Before treating numbers as production-ready, run the **HPC / GPU rigorous verification** checklist in `dream/docs/EVAL_PROTOCOL.md` **§10** (environment, `validate_dream.py` smoke test, full task lists, EvalPlus backend, optional alignment with the training container). The automatic tests below assume a GPU-capable machine when they invoke the eval scripts.
 
 ### EvalPlus integration
 
@@ -663,8 +738,8 @@ The following should be updated in `research_decisions.md`:
 |---|---|---|---|---|
 | 1 (partial) | Write `Dockerfile` + `entrypoint.py` | This document, section on Docker image design | `dream/sandbox/Dockerfile`, `dream/sandbox/entrypoint.py` | `docker build` succeeds; test commands in Step 1 pass |
 | 2 | Write `convert_acecode.py` | This document, DiffuCoder's `process_data.py`, AceCode HF page | `dream/scripts/convert_acecode.py` | Automatic tests in Step 2 pass |
-| 3 | Write `convert_humaneval.py` and `convert_mbpp.py` | This document, EvalPlus docs | Two converter scripts | Automatic tests in Step 3 pass |
-| 4 (partial) | Write `EVAL_PROTOCOL.md` | This document, DiffuCoder README | `dream/docs/EVAL_PROTOCOL.md` | Accurate, matches code |
+| 3 | Write `convert_humaneval.py` and `convert_mbpp.py` | This document, EvalPlus docs | Converters + `eval_dataset_convert.py`; `pytest dream/tests/test_convert_eval_datasets.py`; full JSONL counts on HPC with `evalplus` (see Step 3 “Laptop vs HPC”) |
+| 4 (partial) | Write `EVAL_PROTOCOL.md` | This document, DiffuCoder README | `dream/docs/EVAL_PROTOCOL.md` | **Done** — reviewed against `dream/src/formatting.py`, `task_registry.py`, `validate_dream.py` |
 
 ### Needs careful attention (do yourself or review closely)
 

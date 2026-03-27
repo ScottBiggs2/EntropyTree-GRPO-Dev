@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from dream.src.task_registry import (
@@ -49,3 +50,23 @@ def test_export_execution_lite_rows_round_trip_shape():
     assert rows
     assert rows[0]["function_name"] == tasks[0].entry_point
     assert rows[0]["prompt"] == tasks[0].starter_code
+
+
+def test_load_assertion_format_jsonl(tmp_path):
+    p = tmp_path / "ace_assert.jsonl"
+    row = {
+        "task_id": "t1",
+        "source": "test",
+        "split": "train",
+        "instruction": "Add two numbers.",
+        "starter_code": "def add(a, b):",
+        "entry_point": "add",
+        "tests": ["assert add(1, 2) == 3", "assert add(0, 0) == 0"],
+        "test_format": "assertion",
+        "canonical_prompt": "dummy",
+    }
+    p.write_text(json.dumps(row) + "\n")
+    tasks = load_code_tasks(p)
+    assert len(tasks) == 1
+    assert tasks[0].test_format == "assertion"
+    assert tasks[0].tests == ["assert add(1, 2) == 3", "assert add(0, 0) == 0"]

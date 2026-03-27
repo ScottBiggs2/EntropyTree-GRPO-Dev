@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from dream.src.rewards import (
@@ -42,3 +43,24 @@ def test_build_reward_function_dispatch():
         project_root=ROOT,
     )
     assert isinstance(reward, ExecutionShapedReward)
+
+
+def test_execution_shaped_reward_assertion_format(tmp_path):
+    row = {
+        "task_id": "assert_add",
+        "source": "test",
+        "split": "train",
+        "instruction": "Implement add.",
+        "starter_code": "def add(a, b):",
+        "entry_point": "add",
+        "tests": ["assert add(1, 2) == 3"],
+        "test_format": "assertion",
+        "canonical_prompt": "dummy",
+    }
+    p = tmp_path / "assert.jsonl"
+    p.write_text(json.dumps(row) + "\n")
+    task = load_code_tasks(p)[0]
+    reward = ExecutionShapedReward(registry_path=str(p), project_root=ROOT)
+    completion = "    return a + b"
+    score = reward(completion, task.canonical_prompt)
+    assert score >= 1.0

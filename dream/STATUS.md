@@ -2,100 +2,137 @@
 
 Updated: 2026-03-26
 
+## Documentation Map
+
+| Document | Purpose |
+|----------|---------|
+| `dream/README.md` | How to run scripts, CLI flags, file layout |
+| `dream/STATUS.md` | This file — what's done, what's next |
+| `dream/PLAN_01_CORE_MIGRATION.md` | Original Dream migration plan (Steps 1-10, core stack) |
+| `dream/PLAN_02_GRPO_EXTENSION.md` | Code-GRPO extension plan (Steps 11-18) |
+| `dream/PLAN_03_ENVIRONMENT_SCALEUP.md` | **Active plan** — AceCode data, container sandbox, EvalPlus eval |
+| `dream/HPC_SYNC.md` | Stale-clone troubleshooting for HPC |
+| `dream/docs/EVAL_PROTOCOL.md` | HumanEval/MBPP evaluation procedure |
+| `dream/docs/WANDB_METRICS.md` | W&B metric interpretation guide |
+| `research_decisions.md` | All research decisions (OPEN/DECIDED/DEFERRED) |
+| `literature_reference.md` | Papers and repos reference |
+
 ## What Is Implemented
 
-- Dream-specific adapter, entropy weighting fix, interval-aware time weighting, adaptive branching, LoRA support, and grouped tree loss are implemented.
-- Flat GRPO and entropy-tree GRPO both exist in `dream/src/trainer.py`.
-- Dream code-GRPO infrastructure now includes:
-  - task schema and registry via `dream/src/task_registry.py`
-  - prompt/code normalization via `dream/src/formatting.py`
-  - execution-first reward options via `dream/src/rewards.py` (`build_reward_function`, including `execution_shaped`)
-  - dataset-aware comparison runner and single-step script via `dream/scripts/run_dream_comparison.py` and `dream/scripts/single_step_dream.py`
-  - sample task datasets in `dream/data/`
-  - branch diversity / trajectory observability in `dream/src/observability.py` (metrics merged into trainer outputs)
-- Docs: `dream/HPC_SYNC.md` (stale clone vs current CLI), `dream/scripts/extract_dataset_prompt.py` (legacy `--prompt` workflows).
+### Core stack (PLAN_01, Steps 1-10)
+
+- Dream-specific adapter, entropy weighting, interval-aware time weighting, adaptive branching, LoRA, grouped tree loss
+- Flat GRPO (`BaselineGRPOTrainer`) and entropy-tree GRPO (`EntropyMCTSTrainer`) in `dream/src/trainer.py`
+- Branch diversity / trajectory observability in `dream/src/observability.py`
+
+### Code-GRPO infrastructure (PLAN_02, Steps 11-13)
+
+- Task schema and registry: `dream/src/task_registry.py` (supports `test_format: assertion` and `args_expected`)
+- Prompt/code normalization: `dream/src/formatting.py`
+- Execution-first rewards: `dream/src/rewards.py` (factory via `build_reward_function`)
+- Dataset-aware runners: `dream/scripts/run_dream_comparison.py`, `dream/scripts/single_step_dream.py`
+- Sample datasets: `dream/data/code_grpo_{train,dev}.sample.jsonl`
+
+### Environment scale-up (PLAN_03, Steps 1-4 partial)
+
+- Container sandbox: `dream/sandbox/Dockerfile` + `entrypoint.py` (dual assertion/args_expected modes)
+- AceCode-89K converter: `dream/scripts/convert_acecode.py` (DiffuCoder-aligned filtering)
+- HumanEval/MBPP converters: `dream/scripts/convert_humaneval.py`, `dream/scripts/convert_mbpp.py`
+- Shared conversion logic: `dream/src/eval_dataset_convert.py` (assertion extraction, `candidate` rewrite)
+- Evaluation protocol doc: `dream/docs/EVAL_PROTOCOL.md`
 
 ## Verified Locally
 
-- `python -m pytest dream/tests -q` (includes task registry, formatting, rewards, observability, trainer minimal, etc.)
-- `python dream/scripts/check_reward_pipeline.py` on the sample dataset.
-- Dataset-backed reward lookup off `canonical_prompt` with execution against starter code.
+- `python -m pytest dream/tests -q` — 17 tests pass (task registry, formatting, rewards, observability, dataset conversion)
+- `python dream/scripts/check_reward_pipeline.py` on sample dataset
+- Dataset-backed reward lookup with execution against starter code
 
-## Verified on GPU / HPC (bring-up complete)
+## Verified on GPU / HPC
 
-The following have been run successfully on a cloud GPU with `--dataset`, `--reward execution_shaped`, and LoRA:
+1. **Single-step tree GRPO** — `single_step_dream.py` with sample JSONL: Dream 7B loads, diversity metrics present, execution-shaped rewards nonzero
+2. **Flat GRPO baseline** — `run_dream_comparison.py --phase grpo_lora_baseline`: finite metrics, `workload_source=dataset`
 
-1. **Single-step tree GRPO** — `dream/scripts/single_step_dream.py` with `dream/data/code_grpo_train.sample.jsonl`: loads Dream 7B, prints dataset task metadata, finite `Metrics:` (including diversity fields), execution-shaped rewards nonzero.
-2. **Flat GRPO baseline** — `dream/scripts/run_dream_comparison.py --phase grpo_lora_baseline` with the same dataset: two prompts, finite metrics, `workload_source=dataset`.
+If `--dataset` / `--reward` flags are unrecognized, see `dream/HPC_SYNC.md`.
 
-If your cluster rejects `--dataset` / `--reward`, the checkout is behind; see **`dream/HPC_SYNC.md`**.
+## What's Next (PLAN_03)
 
-## Next: HumanEval and MBPP (primary focus)
+### Remaining steps for HPC execution
 
-Core training plumbing for code GRPO is in place; the **next milestone** is **standard benchmark evaluation** and (as needed) **training data at benchmark scale**, per `dream/FULL_GRPO_EXTENSION_PLAN.md` Step 16 and `research_decisions.md` (e.g. D-011, D-018, D-024).
+**Step 1 — Run AceCode converter** (needs network for HuggingFace download):
 
-### Implementation order (suggested)
+```bash
+pip install datasets numpy
+python dream/scripts/convert_acecode.py --output-dir dream/data/ --difficulty hard --dev-frac 0.05
+# Expect: ~15K train tasks, ~750 dev tasks in dream/data/acecode_hard_{train,dev}.jsonl
+```
 
-1. **Choose harness** — Dream-org eval, Apple/DiffuCoder-style export, or `dllm` / OpenAI `human-eval` + MBPP scripts; keep **prompt formatting** aligned with `dream/src/formatting.py` / `build_code_task_prompt` where possible.
-2. **Export + eval scripts** in `dream/scripts/` (e.g. load checkpoint → generate completions → extract code → run official or EvalPlus tests): HumanEval first (small, canonical), then MBPP (subset for speed).
-3. **Task conversion** — converters from HumanEval/MBPP JSON into `CodeTask` JSONL (or documented bridge to `data/execution_lite.json`) so **training rewards** and **eval** share one schema where feasible.
-4. **Train/dev policy** — explicit held-out split for tuning; keep benchmark test sets **eval-only** unless you intentionally train on them (document in `research_decisions.md`).
-5. **Optional hardening** (can parallelize with eval): flat/tree logging parity, run metadata (git hash, dataset fingerprint), `dream/docs/EVAL_PROTOCOL.md`.
+**Step 2 — Run HumanEval/MBPP converters** (needs `evalplus`):
 
-### Still open (not blocking MBPP/HumanEval scripts)
+```bash
+pip install evalplus
+python dream/scripts/convert_humaneval.py --output dream/data/humaneval.jsonl
+python dream/scripts/convert_mbpp.py --output dream/data/mbpp.jsonl
+# Expect: 164 HumanEval tasks, ~378 MBPP tasks, all split=eval
+```
 
-- Pluggable remote execution backends (`execution_backends.py` in the extension plan) — local subprocess path is enough for standard harnesses initially.
-- LLM-as-a-judge — remains optional / out of headline path.
+**Step 3 — Build and test container sandbox** (local Docker):
 
-### Good delegation targets
+```bash
+docker build -t dream-sandbox:latest dream/sandbox/
+# Test assertion mode:
+echo '{"code":"def add(a,b): return a+b","test_cases":["assert add(1,2)==3"],"test_format":"assertion"}' \
+  | docker run -i --rm --network=none dream-sandbox:latest
+# Should print: 1.0
+```
 
-- MBPP/HumanEval JSONL converters and `dream/data/` staging files
-- Formatting edge-case tests (fenced code, chatty completions)
-- Per-run artifact logging (best/worst completion per step) for debugging
+**Step 4 — Pull sandbox on HPC** (Apptainer):
 
-## Reference commands (GPU)
+```bash
+srun --constraint=ib -p short --pty /bin/bash
+cd /projects/$GROUP/container_images
+mkdir -p cache tmp
+export APPTAINER_CACHEDIR=$(pwd)/cache APPTAINER_TMPDIR=$(pwd)/tmp
+apptainer pull dream-sandbox.sif docker://YOUR_DOCKERHUB/dream-sandbox:latest
+```
 
-### Single-step tree smoke (dataset + execution-shaped reward)
+### Still to implement (code changes needed)
+
+- `dream/src/execution_backends.py` — pluggable backend ABC (`SubprocessBackend`, `ContainerBackend`)
+- `dream/scripts/eval_humaneval.py`, `dream/scripts/eval_mbpp.py` — generate completions + run EvalPlus
+- Wire `--execution-backend` flag into training scripts
+- End-to-end validation at AceCode scale (100-task subset)
+
+See `dream/PLAN_03_ENVIRONMENT_SCALEUP.md` for full details, failure modes, and delegation guide.
+
+## Reference Commands (GPU)
+
+### Single-step tree smoke
 
 ```bash
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 python dream/scripts/single_step_dream.py \
-  --lora \
-  --profile-memory \
+  --lora --profile-memory \
   --dataset dream/data/code_grpo_train.sample.jsonl \
-  --dataset-split train \
-  --task-index 0 \
+  --dataset-split train --task-index 0 \
   --reward execution_shaped \
-  --max-tree-nodes 5 \
-  --max-new-tokens 96 \
-  --steps-per-expansion 12
+  --max-tree-nodes 5 --max-new-tokens 96 --steps-per-expansion 12
 ```
 
-### Flat GRPO smoke (comparison runner uses **underscore** tree/token flags)
+### Flat GRPO smoke
 
 ```bash
 python dream/scripts/run_dream_comparison.py \
-  --phase grpo_lora_baseline \
-  --device cuda \
+  --phase grpo_lora_baseline --device cuda \
   --dataset dream/data/code_grpo_train.sample.jsonl \
-  --dataset-split train \
-  --reward execution_shaped \
-  --lora \
-  --max-tasks 2 \
-  --num_epochs 1 \
-  --max_tree_nodes 8 \
-  --max_new_tokens 96 \
-  --no_wandb
+  --dataset-split train --reward execution_shaped \
+  --lora --max-tasks 2 --num_epochs 1 \
+  --max_tree_nodes 8 --max_new_tokens 96 --no_wandb
 ```
 
-### Reward pipeline (no GPU model)
+### Reward pipeline (no GPU)
 
 ```bash
 python dream/scripts/check_reward_pipeline.py \
   --dataset dream/data/code_grpo_train.sample.jsonl \
-  --dataset-split train \
-  --reward execution_shaped \
-  --max-tasks 3
+  --dataset-split train --reward execution_shaped --max-tasks 3
 ```
-
-See **`dream/README.md`** for CLI naming (`single_step` vs `run_dream_comparison`) and **`dream/HPC_SYNC.md`** if flags mismatch.

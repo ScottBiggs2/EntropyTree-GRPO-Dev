@@ -221,7 +221,7 @@ sampled = torch.multinomial(probs, num_samples=1)
 | **Status** | `OPEN` |
 | **Default** | For Dream/code GRPO: HumanEval pass@1 as the primary reported metric, MBPP as secondary, EvalPlus optional once the harness is stable |
 | **Rationale** | The evaluation question is now tied to the Dream code setting, not just the toy MDLM phase. We want a benchmark suite that is standard enough for comparison to Dream-Coder / DiffuCoder style results, while still being tractable to run repeatedly during development. |
-| **Progress (2026-03)** | Dream GRPO **training** path supports dataset + execution-shaped rewards on GPU; **Next**: implement HumanEval/MBPP eval from checkpoints (`dream/STATUS.md`, `FULL_GRPO_EXTENSION_PLAN.md` Step 16). |
+| **Progress (2026-03)** | Dream GRPO **training** path supports dataset + execution-shaped rewards on GPU; **Next**: implement HumanEval/MBPP eval from checkpoints (`dream/STATUS.md`, `PLAN_03_ENVIRONMENT_SCALEUP.md` Step 4). |
 
 **Your Notes**:
 > Needs updating for Dream, to compete with Apple DiffuCoder

@@ -36,6 +36,7 @@ def run_tests(
     tests: List[Any],
     timeout: float = EXECUTION_TIMEOUT,
     project_root: Optional[Path] = None,
+    test_format: str = "args_expected",
 ) -> float:
     """
     Run completion in a subprocess with the given tests.
@@ -51,11 +52,15 @@ def run_tests(
         return 0.0
     if not completion or not completion.strip():
         return 0.0
-    tests_serializable = [t if isinstance(t, list) else list(t) for t in tests]
+    if test_format == "assertion":
+        tests_serializable = list(tests)
+    else:
+        tests_serializable = [t if isinstance(t, list) else list(t) for t in tests]
     config = {
         "function_name": function_name,
         "tests": tests_serializable,
         "prompt": prompt,
+        "test_format": test_format,
     }
     runner = _runner_script_path(project_root)
     if not runner.exists():

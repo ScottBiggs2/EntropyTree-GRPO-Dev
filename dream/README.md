@@ -18,7 +18,7 @@ The original MDLM stack in `src/` remains the reference baseline.
 
 - **Done for code GRPO bring-up**: `CodeTask` schema + loaders (`task_registry.py`), formatting/extraction (`formatting.py`), execution-first rewards (`rewards.py` + `build_reward_function`), dataset-aware `single_step_dream.py` and `run_dream_comparison.py`, diversity metrics (`observability.py`), sample data under `dream/data/`.
 - **Validated on GPU**: at least one **tree** single-step and one **flat** `grpo_lora_baseline` run with `--reward execution_shaped` and a JSONL dataset.
-- **Next**: **HumanEval + MBPP** evaluation from checkpoints (export → generate → extract → test), plus larger train/dev data as needed — see **`dream/STATUS.md`** and Step 16 in **`dream/FULL_GRPO_EXTENSION_PLAN.md`**.
+- **Next**: AceCode-89K data ingestion, container sandbox, EvalPlus evaluation — see **`dream/STATUS.md`** and **`dream/PLAN_03_ENVIRONMENT_SCALEUP.md`**.
 
 ---
 
@@ -46,8 +46,10 @@ srun --partition=gpu --nodes=1 --pty --gres=gpu:1 --ntasks=1 --mem=32GB --time=1
 
 ```text
 dream/
-├── DEVELOPMENT_PLAN.md   # Detailed step-by-step migration plan
-├── STATUS.md             # What is implemented vs what still needs GPU/eval work
+├── PLAN_01_CORE_MIGRATION.md   # Original Dream migration plan (Steps 1-10)
+├── PLAN_02_GRPO_EXTENSION.md   # Code-GRPO extension (Steps 11-18)
+├── PLAN_03_ENVIRONMENT_SCALEUP.md  # Active: AceCode, sandbox, EvalPlus
+├── STATUS.md                   # What is done, what's next, HPC commands
 ├── HPC_SYNC.md           # If HPC rejects --dataset/--reward: stale clone; how to sync
 ├── README.md             # This file
 ├── src/
@@ -114,7 +116,7 @@ For a concise running summary of what is implemented and what still needs GPU wo
 see `dream/STATUS.md`.
 
 You can freely extend the Dream stack in `dream/src/` following the
-guidelines in `DEVELOPMENT_PLAN.md` without touching the original `src/`
+guidelines in `PLAN_01_CORE_MIGRATION.md` without touching the original `src/`
 module.
 
 ---
@@ -216,7 +218,7 @@ Shared concepts: `--wandb_group` (script sets to `dream_cmp_$SLURM_JOB_ID`), `--
 
 **W&B metrics (flat lines, identical `n_loss_forwards`, etc.):** See **`dream/docs/WANDB_METRICS.md`**. Short version: `mean_w_time` / `mean_w_ent` are **raw** weights ( **`alpha` does not scale them in the log** ); `mean_weight` uses \(\alpha_{\text{time}}\) and \(\alpha_{\text{entropy}}\). `entropy_weight_min` (default **0.08** in comparison runs) **clamps** low-entropy edges; watch **`frac_entropy_clamped_low`**. **`mean_reward`**, **`min_reward`**, **`max_reward`** summarize reward spread. `phase_idx` is **arm id**, not time. **`cfg_*` scalars** are logged each step for verification.
 
-**Adaptive stepping sanity:** `H/log(V)` is usually **≤ 1**; a threshold **> 1** (e.g. the old `1.1` default) **never** early-stops on that test. If step 4 shows identical `steps_in_edge`, try lowering `--branch-threshold` (e.g. `0.5`) or widening `[min,max]`; see `DEVELOPMENT_PLAN.md` Appendix C.
+**Adaptive stepping sanity:** `H/log(V)` is usually **≤ 1**; a threshold **> 1** (e.g. the old `1.1` default) **never** early-stops on that test. If step 4 shows identical `steps_in_edge`, try lowering `--branch-threshold` (e.g. `0.5`) or widening `[min,max]`; see `PLAN_01_CORE_MIGRATION.md` Appendix C.
 
 ---
 
@@ -303,7 +305,7 @@ Target modules are **fixed** in `dream/src/utils.py` (`apply_lora_to_dream_model
 ### LoRA vs adaptive branching
 
 - **Adaptive branching** is controlled only by tree **`MCTSConfig`**: `adaptive_stepping`, `branch_threshold`, `min_steps_per_expansion`, `max_steps_per_expansion`, plus `branch_width` / `max_tree_nodes`. It does **not** read LoRA-specific fields.
-- **LoRA changes the forward** (base weights + adapters). So entropy at each node, early-stop in `denoise_chunk_adaptive`, and frontier ordering **follow the same code** but with **different logits** than the base model. After a lot of LoRA training, you may want to **re-tune** `branch_threshold` (see Appendix C in `DEVELOPMENT_PLAN.md`).
+- **LoRA changes the forward** (base weights + adapters). So entropy at each node, early-stop in `denoise_chunk_adaptive`, and frontier ordering **follow the same code** but with **different logits** than the base model. After a lot of LoRA training, you may want to **re-tune** `branch_threshold` (see Appendix C in `PLAN_01_CORE_MIGRATION.md`).
 - **Recommendation:** validate **adaptive stepping on the base model** first (step 4 above); then enable **`--lora`** for training (step 6) and compare behavior if needed.
 
 ---
@@ -337,7 +339,7 @@ On a cloud machine with sufficient GPU memory (e.g. A100 40GB+):
 
 3. **Tree + training (summary)** — see **Cloud GPU — test checklist** above for `validate_dream_tree.py` and `single_step_dream.py` (including **`--lora`** and **`--adaptive-stepping`**).
 
-   **Full fine-tune vs ~32GB:** full **7B** fine-tune needs ~14GB weights + ~14GB grads (bf16) before activations. Use **`--lora`** on ~32GB GPUs. The loss groups **sibling edges**; metrics include `n_loss_forwards` ≤ `n_transitions`. See **`dream/DEVELOPMENT_PLAN.md` Appendix D**. Also: `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`, `--profile-memory`, smaller `--max-new-tokens` if needed.
+   **Full fine-tune vs ~32GB:** full **7B** fine-tune needs ~14GB weights + ~14GB grads (bf16) before activations. Use **`--lora`** on ~32GB GPUs. The loss groups **sibling edges**; metrics include `n_loss_forwards` ≤ `n_transitions`. See **`dream/PLAN_01_CORE_MIGRATION.md` Appendix D**. Also: `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`, `--profile-memory`, smaller `--max-new-tokens` if needed.
 
 4. **Use Dream in your own training loop**: load with `dream.src.utils.load_model_and_tokenizer`
    and `MCTSConfig(model_type="dream", model_name_or_path="Dream-org/Dream-v0-Instruct-7B")`.
@@ -356,7 +358,7 @@ On a cloud machine with sufficient GPU memory (e.g. A100 40GB+):
 
    You can later experiment with an LLM-as-a-judge by wrapping an
    external scorer and combining it with these concrete rewards
-   (see `DEVELOPMENT_PLAN.md`, Step 11). The trainer only requires
+   (see `PLAN_01_CORE_MIGRATION.md`, Step 11). The trainer only requires
    a callable `reward_fn(completion, prompt) -> float`.
 
 6. **Construct the trainer and run training**:
@@ -379,7 +381,7 @@ On a cloud machine with sufficient GPU memory (e.g. A100 40GB+):
    ```
 
 7. For full experimental details (baselines, evaluation, baseline GRPO), follow
-   the step-by-step instructions in `DEVELOPMENT_PLAN.md`.
+   the step-by-step instructions in `PLAN_01_CORE_MIGRATION.md`.
 
 ---
 

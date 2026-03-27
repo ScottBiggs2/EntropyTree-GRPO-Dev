@@ -2,7 +2,7 @@
 
 **Project**: Entropy-Guided MCTS-GRPO for Diffusion Language Models  
 **Scope**: Extend the current `dream/` stack from corrected tree mechanics plus light code smoke tests into a fuller, DiffuCoder-aligned GRPO setting for code generation.  
-**Status**: Steps 11–13 **implemented** in code (schema, formatting, execution-first rewards, dataset-aware runners); GPU smoke tests passed (tree single-step + flat GRPO with `execution_shaped`). Steps 14–18 **partial or pending** — see **Current-State Summary** below. Research choices remain in `research_decisions.md`.
+**Status**: Steps 11–13 **implemented** in code (schema, formatting, execution-first rewards, dataset-aware runners); GPU smoke tests passed (tree single-step + flat GRPO with `execution_shaped`). **Container sandbox (partial):** `dream/sandbox/Dockerfile` and `dream/sandbox/entrypoint.py` are in place per `dream/PLAN_03_ENVIRONMENT_SCALEUP.md` Step 1; `dream/src/execution_backends.py` and reward wiring are **not** done yet — see **`dream/PLAN_03_ENVIRONMENT_SCALEUP.md` → Step 1 implementation status and verification**. Steps 14–18 **partial or pending** — see **Current-State Summary** below. Research choices remain in `research_decisions.md`.
 
 ---
 
@@ -21,7 +21,7 @@ As of 2026-03, the training loop can run **execution-shaped, dataset-backed** GR
 - **Remaining gap**: standard **benchmark** evaluation (HumanEval, MBPP, optional EvalPlus) as separate scripts from training — see Step 16 and `dream/STATUS.md` next steps.
 - Optional LLM-as-a-judge remains a placeholder; keep it out of the headline path until execution-only results are stable.
 
-This document defines a concrete plan for extending `dream/DEVELOPMENT_PLAN.md` and for identifying which new open questions should be sent to `research_decisions.md`.
+This document defines a concrete plan for extending `dream/PLAN_01_CORE_MIGRATION.md` and for identifying which new open questions should be sent to `research_decisions.md`.
 
 ---
 
@@ -76,6 +76,7 @@ If a choice affects the scientific interpretation, do not bury it in code defaul
 - `dream/scripts/run_dream_comparison.py`: dataset-aware phases (tree + flat GRPO arms), `--dataset`, `--reward`, etc.
 - `dream/scripts/check_reward_pipeline.py`, `dream/data/*.sample.jsonl`: local verification without full model load.
 - **GPU validated**: tree one-step + flat `grpo_lora_baseline` with `execution_shaped` on sample JSONL (see `dream/STATUS.md`).
+- **Container image sources (bring-up)**: `dream/sandbox/Dockerfile` and `dream/sandbox/entrypoint.py` implement the dual test formats (`assertion` strings vs `args_expected` tuples) described in `dream/PLAN_03_ENVIRONMENT_SCALEUP.md` Step 1. **Verification** (local Docker, HPC Apptainer, caveats) lives in **`dream/PLAN_03_ENVIRONMENT_SCALEUP.md` → [Step 1 implementation status and verification](PLAN_03_ENVIRONMENT_SCALEUP.md#step-1-implementation-status-and-verification)**.
 
 ### Main gaps to close
 
@@ -83,14 +84,14 @@ If a choice affects the scientific interpretation, do not bury it in code defaul
 - **Data at scale**: train/dev JSONL beyond samples; explicit eval-only holdout for benchmark tasks (research decision in `research_decisions.md`).
 - **Steps 14–15**: deeper flat baseline / tree parity logging, degenerate-batch handling, optional dedicated tests (`test_baseline_grpo_code.py`, etc.).
 - **Step 17**: run metadata (git commit, dataset hash), `EXPERIMENT_MATRIX.md`-style documentation.
-- **Step 13 (optional)**: `execution_backends.py` for non-local sandboxes (E2B, etc.); not required for standard HumanEval/MBPP harnesses.
+- **Step 13 (remaining)**: `dream/src/execution_backends.py`, optional `dream/sandbox/README.md`, and reward integration so training can call the container backend — the **Docker/Apptainer image layer** exists, but the **Python `ExecutionBackend` abstraction and `rewards.py` plumbing** are still pending (see `dream/PLAN_03_ENVIRONMENT_SCALEUP.md` Step 1 “needs careful attention”). Optional E2B or other remote services remain future options.
 - **Step 18**: judge integration — stub only; keep opt-in.
 
 ---
 
-## What Should Change In `dream/DEVELOPMENT_PLAN.md`
+## What Should Change In `dream/PLAN_01_CORE_MIGRATION.md`
 
-The existing `dream/DEVELOPMENT_PLAN.md` should remain the source of truth for the already-implemented Dream migration and corrected-loss stack. The extension should be additive, not a rewrite.
+The existing `dream/PLAN_01_CORE_MIGRATION.md` should remain the source of truth for the already-implemented Dream migration and corrected-loss stack. The extension should be additive, not a rewrite.
 
 ### Recommended structure change
 
@@ -256,7 +257,10 @@ Be close to DiffuCoder in spirit:
 **Files to create or modify**:
 
 - `dream/src/rewards.py`
-- `dream/src/execution_backends.py`
+- `dream/src/execution_backends.py` *(pending — pluggable backend; see `PLAN_03_ENVIRONMENT_SCALEUP.md`)*
+- `dream/sandbox/Dockerfile` *(present — `python:3.11-slim`, entrypoint as `ENTRYPOINT`)*
+- `dream/sandbox/entrypoint.py` *(present — JSON on stdin or `argv[1]`; `test_format` `assertion` / `args_expected`)*
+- `dream/sandbox/README.md` *(optional; not required for bring-up)*
 - `dream/scripts/check_reward_pipeline.py`
 - `dream/tests/test_rewards_execution_full.py`
 
@@ -288,6 +292,8 @@ Be close to DiffuCoder in spirit:
 python dream/scripts/check_reward_pipeline.py --dataset dream/data/code_grpo_dev.sample.jsonl --backend local
 python -m pytest dream/tests/test_rewards_execution_full.py -q
 ```
+
+**Container sandbox** (after `execution_backends.py` exists): follow `dream/PLAN_03_ENVIRONMENT_SCALEUP.md` Step 1 ([implementation status and verification](PLAN_03_ENVIRONMENT_SCALEUP.md#step-1-implementation-status-and-verification)) and automatic tests there.
 
 `check_reward_pipeline.py` should:
 
@@ -586,6 +592,7 @@ These should remain open until explicitly decided by the user. They are listed h
 **Keep OPEN**. Candidate default:
 
 - local subprocess backend for development,
+- Docker/Apptainer container using `dream/sandbox/` (image + entrypoint implemented; Python `ExecutionBackend` wiring still pending),
 - E2B or equivalent remote sandbox for heavier runs.
 
 ### D-021: Prompt Template Lock
@@ -664,6 +671,7 @@ It intentionally does **not** adopt coupled-sampling as the first extension, bec
 
 Relevant references:
 
+- In-repo environment / sandbox scale-up: `dream/PLAN_03_ENVIRONMENT_SCALEUP.md` (container Step 1 implementation status, automatic tests, local/HPC verification, data, EvalPlus).
 - DiffuCoder repository: <https://github.com/apple/ml-diffucoder>
 - DiffuCoder paper: <https://arxiv.org/abs/2506.20639>
 - Dream model: <https://huggingface.co/Dream-org/Dream-v0-Instruct-7B>

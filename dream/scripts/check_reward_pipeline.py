@@ -80,6 +80,8 @@ def main() -> int:
     n_good = 0
     for task in tasks:
         good = KNOWN_GOOD.get(task.entry_point)
+        if good is None and task.metadata:
+            good = task.metadata.get("reference_completion")
         bad = KNOWN_BAD["generic"]
         prompt = task.canonical_prompt
         bad_score = reward_fn(bad, prompt)
