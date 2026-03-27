@@ -8,4 +8,4 @@ wandb>=0.16.0
 deepspeed>=0.15.0
 pytest
 datasets>=2.16.0
-# Step 3 eval converters: pip install evalplus
+evalplus>=0.3.1
