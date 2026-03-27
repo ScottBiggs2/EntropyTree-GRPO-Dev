@@ -238,6 +238,12 @@ def main() -> int:
     p.add_argument("--dev-frac", type=float, default=0.05)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="If >0, only load the first N rows from the dataset (saves bandwidth/time)",
+    )
+    p.add_argument(
         "--skip-transform",
         action="store_true",
         help="Do not duplicate rows with structured question format (DiffuCoder transform)",
@@ -268,7 +274,10 @@ def main() -> int:
         if hasattr(ds, "keys") and "train" in ds:
             ds = ds["train"]
     else:
-        ds = load_dataset(args.dataset, split="train")
+        split_spec = "train"
+        if args.limit > 0:
+            split_spec = f"train[:{args.limit}]"
+        ds = load_dataset(args.dataset, split=split_spec)
 
     print(f"Loaded {len(ds)} examples from {args.dataset or args.local_path}")
 

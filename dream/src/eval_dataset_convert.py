@@ -170,11 +170,8 @@ def mbpp_to_row(
     source: str = "mbpp_plus",
 ) -> Dict[str, Any]:
     task_id = str(item["task_id"])
-    text = str(item.get("text") or "").strip()
-    code = str(item.get("code") or "")
-    test_list = item.get("test_list") or []
-    if not isinstance(test_list, list) or not test_list:
-        raise ValueError(f"{task_id}: missing test_list")
+    text = str(item.get("text") or item.get("prompt") or "").strip()
+    code = str(item.get("code") or item.get("canonical_solution") or "")
 
     entry_point = str(item.get("entry_point") or "").strip()
     if not entry_point:
@@ -182,14 +179,24 @@ def mbpp_to_row(
     if not entry_point:
         raise ValueError(f"{task_id}: could not determine entry_point")
 
+    test_list = item.get("test_list") or []
     assertions: List[str] = []
-    for t in test_list:
-        if not isinstance(t, str):
-            raise ValueError(f"{task_id}: test_list entries must be strings")
-        s = t.strip()
-        if not s.lower().startswith("assert"):
-            raise ValueError(f"{task_id}: test must start with assert: {s[:80]!r}")
-        assertions.append(s)
+
+    if isinstance(test_list, list) and test_list:
+        for t in test_list:
+            if not isinstance(t, str):
+                raise ValueError(f"{task_id}: test_list entries must be strings")
+            s = t.strip()
+            if not s.lower().startswith("assert"):
+                raise ValueError(f"{task_id}: test must start with assert: {s[:80]!r}")
+            assertions.append(s)
+    else:
+        test_code = str(item.get("test") or "")
+        if test_code:
+            assertions = extract_assertions_from_humaneval_test(test_code)
+
+    if not assertions:
+        raise ValueError(f"{task_id}: no assertions found (tried test_list and test)")
 
     assertions = replace_candidate_with_entry_point(assertions, entry_point)
 

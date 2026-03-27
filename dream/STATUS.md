@@ -67,15 +67,20 @@ pip install -r dream/requirements.txt
 **Step 1 — Run AceCode converter** (needs network for HuggingFace download):
 
 ```bash
-python dream/scripts/convert_acecode.py --output-dir dream/data/ --difficulty hard --dev-frac 0.05
-# Expect: ~15K train tasks, ~750 dev tasks in dream/data/acecode_hard_{train,dev}.jsonl
+# Full dataset (~19K train after filtering):
+python dream/scripts/convert_acecode.py \
+  --output-dir /scratch/biggs.s/dream_data/ --difficulty hard --dev-frac 0.05
+
+# Quick test (first 5000 rows only, much faster):
+python dream/scripts/convert_acecode.py \
+  --output-dir /scratch/biggs.s/dream_data/ --difficulty hard --dev-frac 0.05 --limit 5000
 ```
 
 **Step 2 — Run HumanEval/MBPP converters**:
 
 ```bash
-python dream/scripts/convert_humaneval.py --output dream/data/humaneval.jsonl
-python dream/scripts/convert_mbpp.py --output dream/data/mbpp.jsonl
+python dream/scripts/convert_humaneval.py --output /scratch/biggs.s/dream_data/humaneval.jsonl
+python dream/scripts/convert_mbpp.py      --output /scratch/biggs.s/dream_data/mbpp.jsonl
 # Expect: 164 HumanEval tasks, ~378 MBPP tasks, all split=eval
 ```
 
