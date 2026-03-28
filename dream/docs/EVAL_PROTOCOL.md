@@ -3,7 +3,7 @@
 **Project**: Entropy-Guided MCTS-GRPO for diffusion language models (Dream stack)  
 **Purpose**: Single reference for how we generate completions from a Dream checkpoint and score them with [EvalPlus](https://github.com/evalplus/evalplus), aligned with training (`dream/src/formatting.py`, `dream/src/task_registry.py`) and with DiffuCoder-style reporting.
 
-**Related**: `dream/PLAN_03_ENVIRONMENT_SCALEUP.md` (Step 4), `research_decisions.md` (D-011, D-024), `dream/scripts/validate_dream.py` (reference `diffusion_generate` usage).
+**Related**: `dream/PLAN_03_ENVIRONMENT_SCALEUP.md` (Step 4), `research_decisions.md` (D-011, D-024, **D-031** training vs DiffuCoder-eval prompt mismatch), `dream/scripts/validate_dream.py` (reference `diffusion_generate` usage), `dream/src/eval_prompts.py` (DiffuCoder Tables 5–6 templates for literature-aligned runs).
 
 **Verification scope**: This protocol was **authored and reviewed against static code** (formatting, task registry, `validate_dream.py`) on a **typical laptop**, without loading Dream 7B or running full HumanEval+/MBPP+ EvalPlus jobs. Treat §10 as the checklist for **rigorous validation on the target GPU cluster** (e.g. Northeastern Explorer).
 
@@ -23,21 +23,23 @@ Primary benchmarks: **HumanEval+** and **MBPP+** via EvalPlus (expanded test sui
 ## 2. End-to-end pipeline
 
 1. Load tasks as `CodeTask` rows (e.g. `humaneval.jsonl` / `mbpp.jsonl` from the conversion scripts; see `dream/PLAN_03_ENVIRONMENT_SCALEUP.md` Step 3).
-2. For each task, take the **user-facing string** `task.canonical_prompt` (not the raw instruction alone unless that is what you stored).
-3. Wrap it in the **same chat template** the model was trained on (see §3).
+2. Choose a **prompting regime** (see §3):
+   - **Training-aligned** (debugging / reward parity): build the user string with `build_code_task_prompt()` + `tokenizer.apply_chat_template(..., add_generation_prompt=True)`.
+   - **DiffuCoder-aligned** (literature comparison): use `dream/src/eval_prompts.py` — full string from system through assistant prefill ending in `` ```python\n`` — and tokenize that string **directly** (no `apply_chat_template`), matching DiffuCoder / `qwencoder-eval` (see `research_decisions.md` D-031).
+3. For DiffuCoder-aligned HumanEval, the `{prompt}` slot is **`task.starter_code`** (EvalPlus `prompt` field). For MBPP, it is **`task.instruction`** (task description text).
 4. Call Dream’s **`diffusion_generate`** on the tokenized prompt (see §4).
 5. Decode only the **new** tokens after the prompt; strip chat special tokens if needed.
-6. Extract executable Python with **`extract_python_code`**; optionally **`normalize_completion_for_reward`** with `entry_point=task.entry_point` when scoring execution-shaped rewards (EvalPlus uses its own harness; still use consistent extraction for debugging).
+6. Extract executable Python: for DiffuCoder-aligned runs use **`extract_diffucoder_completion`** in `eval_prompts.py` (fenced `` ```python `` block); for training-style prompts use **`extract_python_code`** / **`normalize_completion_for_reward`** as in rewards code.
 7. Write **JSONL** completions in EvalPlus format (see §5).
 8. Run **EvalPlus** (`evalplus.evaluate` CLI or Python API) and record pass@1 / pass@10.
 
-Planned driver scripts (see Step 4 in the environment plan): `dream/scripts/eval_humaneval.py`, `dream/scripts/eval_mbpp.py`. Until those exist, follow §3–§6 manually or from `validate_dream.py` patterns.
+**Driver scripts** (DiffuCoder-aligned): `dream/scripts/eval_humaneval.py`, `dream/scripts/eval_mbpp.py` — shared loop in `dream/src/eval_generate.py`. Optional `--run-evalplus` invokes `evalplus.evaluate` after writing JSONL.
 
 ---
 
-## 3. Prompt formatting (must match training)
+## 3. Prompt formatting
 
-### 3.1 Building the user message
+### 3.1 Training / reward stack (match `formatting.py`)
 
 Training and reward pipelines build the **user** content with `build_code_task_prompt()` in `dream/src/formatting.py`:
 
@@ -47,9 +49,9 @@ Training and reward pipelines build the **user** content with `build_code_task_p
 
 Dataset rows should set **`canonical_prompt`** to this string (or rely on `task_registry` to compute it from `instruction` + `starter_code` + `language`).
 
-### 3.2 Chat template (Qwen-style / Dream)
+### 3.2 Chat template (Qwen-style / Dream) — training default
 
-Dream Instruct uses a **chat template** with `<|im_start|>` / `<|im_end|>` (Qwen-style). Do **not** hand-assemble those tags unless you are sure they match the tokenizer.
+Dream Instruct uses a **chat template** with `<|im_start|>` / `<|im_end|>` (Qwen-style).
 
 **Canonical pattern** (same as `dream/scripts/validate_dream.py` and the tree builder):
 
@@ -69,7 +71,17 @@ else:
     attention_mask = attention_mask.to(device)
 ```
 
-Any deliberate change (e.g. adding a system message) must be **documented here and in experiment notes**, because it breaks strict comparability with training and with DiffuCoder-style prompts.
+### 3.3 DiffuCoder-aligned eval (literature comparison)
+
+For **comparable numbers to DiffuCoder** (paper Tables 5–6), do **not** use `apply_chat_template` alone. Instead build the **full** string with `build_humaneval_prompt` / `build_mbpp_prompt` in `dream/src/eval_prompts.py`:
+
+- **System**: `You are a helpful assistant.`
+- **User**: HumanEval includes `Please complete the following problem:` plus a fenced copy of `{prompt}`; MBPP is only a fenced `{prompt}` (task text).
+- **Assistant prefill** (part of the **input** tokens): `Here is the code to solve this problem:\n` + `` ```python\n`` so generation continues inside the fence.
+
+Tokenize with `tokenizer(full_prompt_string, return_tensors="pt", add_special_tokens=False)` (see `eval_generate.py`).
+
+**Important**: This differs from §3.1–§3.2 training prompts. See `research_decisions.md` **D-031** — training may omit the system message and use a different user layout; document which regime each experiment uses.
 
 ---
 
@@ -118,10 +130,8 @@ text = tokenizer.decode(gen_ids, skip_special_tokens=True)
 
 ## 5. Code extraction
 
-Use **`extract_python_code`** in `dream/src/formatting.py`:
-
-- Prefer ``` ```python ``` fenced blocks.
-- Else slice from the first line that looks like top-level Python (`def`, `class`, `import`, etc.).
+- **DiffuCoder-aligned eval** (`eval_prompts.py`): use **`extract_diffucoder_completion`** — matches DiffuCoder-style fenced `` ```python ... ``` `` extraction (handles unclosed fences and special tokens like `<|im_end|>`, `<|dlm_pad|>`).
+- **Training / reward-style prompts**: use **`extract_python_code`** in `dream/src/formatting.py` — prefer fenced blocks; else slice from the first line that looks like top-level Python (`def`, `class`, `import`, etc.).
 
 For rewards that need a single function body, **`normalize_completion_for_reward(..., entry_point=task.entry_point)`** trims to `def <entry_point>(` when possible.
 
@@ -170,7 +180,7 @@ EvalPlus can run tests in a sandbox. On clusters where Docker is unavailable or 
 
 - [ ] Record: model id, checkpoint path, LoRA path (if any), commit hash, `pip freeze` or env name.
 - [ ] Record: `max_new_tokens`, `steps`, `temperature`, `top_p`, `alg`, `alg_temp`.
-- [ ] Confirm `canonical_prompt` + `apply_chat_template` match training.
+- [ ] Confirm which prompt regime you used: **training-aligned** (`canonical_prompt` + `apply_chat_template`) vs **DiffuCoder-aligned** (`eval_prompts.py` + direct tokenization).
 - [ ] Save JSONL completions next to EvalPlus stdout / JSON results.
 - [ ] Note EvalPlus package version (`pip show evalplus`).
 
@@ -184,16 +194,18 @@ EvalPlus can run tests in a sandbox. On clusters where Docker is unavailable or 
 
 ---
 
-## 9. File map (code vs planned)
+## 9. File map (code)
 
 | Item | Location |
 |------|----------|
-| Prompt builder | `dream/src/formatting.py` — `build_code_task_prompt` |
+| Training user prompt | `dream/src/formatting.py` — `build_code_task_prompt` |
+| DiffuCoder-aligned eval templates | `dream/src/eval_prompts.py` — `build_humaneval_prompt`, `build_mbpp_prompt`, `extract_diffucoder_completion` |
+| Shared eval generation + JSONL | `dream/src/eval_generate.py` |
 | Tasks | `dream/src/task_registry.py` — `CodeTask`, `load_code_tasks` |
 | Reference generation | `dream/scripts/validate_dream.py` |
-| Eval scripts | `dream/scripts/eval_humaneval.py`, `dream/scripts/eval_mbpp.py` (planned) |
+| Eval drivers | `dream/scripts/eval_humaneval.py`, `dream/scripts/eval_mbpp.py` |
 
-This document is the **normative** description for those scripts once implemented; implementation should follow §3–§6 unless an experiment explicitly documents a deviation.
+Normative for **DiffuCoder-aligned** runs: §3.3, §4, §5, and `eval_generate.py`. Training-aligned smoke tests follow §3.1–§3.2.
 
 ---
 

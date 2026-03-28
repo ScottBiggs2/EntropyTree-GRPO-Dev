@@ -6,6 +6,7 @@ import importlib.util
 from pathlib import Path
 from typing import Dict, Optional
 
+from dream.src.execution_backends import ExecutionBackend, SubprocessBackend
 from dream.src.formatting import normalize_completion_for_reward
 from dream.src.task_registry import build_prompt_lookup, load_code_tasks
 
@@ -81,10 +82,12 @@ class _TaskBackedReward(RewardFunction):
         registry_path: Optional[str] = None,
         timeout: float = 2.0,
         project_root: Optional[Path] = None,
+        backend: Optional[ExecutionBackend] = None,
     ):
         self.registry_path = registry_path
         self.timeout = timeout
         self.project_root = Path(project_root) if project_root is not None else None
+        self.backend = backend
         self._task_lookup: Optional[Dict] = None
 
     def _get_task_lookup(self) -> Dict:
@@ -122,6 +125,27 @@ class _TaskBackedReward(RewardFunction):
 class ExecutionReward(_TaskBackedReward):
     """Pure execution reward: fraction of tests passed."""
 
+    def _run(self, code: str, starter_code: str, func_name: str,
+             tests: list, test_format: str) -> float:
+        if self.backend is not None:
+            return self.backend.run_tests(
+                code=code,
+                function_name=func_name,
+                tests=tests,
+                starter_code=starter_code,
+                timeout=self.timeout,
+                test_format=test_format,
+            )
+        return run_tests(
+            prompt=starter_code,
+            completion=code,
+            function_name=func_name,
+            tests=tests,
+            timeout=self.timeout,
+            project_root=self.project_root,
+            test_format=test_format,
+        )
+
     def __call__(self, completion: str, prompt: str) -> float:
         if not completion.strip():
             return 0.0
@@ -137,15 +161,7 @@ class ExecutionReward(_TaskBackedReward):
         test_format = getattr(task, "test_format", None) or task.get(
             "test_format", "args_expected"
         )
-        return run_tests(
-            prompt=starter_code,
-            completion=code,
-            function_name=func_name,
-            tests=tests,
-            timeout=self.timeout,
-            project_root=self.project_root,
-            test_format=test_format,
-        )
+        return self._run(code, starter_code, func_name, tests, test_format)
 
 
 class ExecutionShapedReward(ExecutionReward):
@@ -166,15 +182,7 @@ class ExecutionShapedReward(ExecutionReward):
         test_format = getattr(task, "test_format", None) or task.get(
             "test_format", "args_expected"
         )
-        frac = run_tests(
-            prompt=starter_code,
-            completion=code,
-            function_name=func_name,
-            tests=tests,
-            timeout=self.timeout,
-            project_root=self.project_root,
-            test_format=test_format,
-        )
+        frac = self._run(code, starter_code, func_name, tests, test_format)
         if frac >= 1.0:
             return 1.0
 
@@ -232,6 +240,7 @@ def build_reward_function(
     registry_path: Optional[str] = None,
     timeout: float = 2.0,
     project_root: Optional[Path] = None,
+    backend: Optional[ExecutionBackend] = None,
 ) -> RewardFunction:
     key = name.strip().lower()
     if key == "syntax":
@@ -243,12 +252,14 @@ def build_reward_function(
             registry_path=registry_path,
             timeout=timeout,
             project_root=project_root,
+            backend=backend,
         )
     if key in ("execution_shaped", "execution_lite"):
         return ExecutionShapedReward(
             registry_path=registry_path,
             timeout=timeout,
             project_root=project_root,
+            backend=backend,
         )
     raise ValueError(f"Unknown reward function: {name}")
 

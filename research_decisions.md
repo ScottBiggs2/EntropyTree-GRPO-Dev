@@ -2,7 +2,7 @@
 
 **Project**: Entropy-Guided MCTS-GRPO for Diffusion Language Models  
 **Scope**: Historical MDLM toy stack in `src/` plus active Dream 7B work in `dream/`  
-**Last Updated**: 2026-03-23
+**Last Updated**: 2026-03-26
 
 ---
 
@@ -514,6 +514,19 @@ $$w_{\text{edge}}(t_0, t_1) = \sum_{t=t_0}^{t_1-1} w(t)$$
 | **Status** | `OPEN` |
 | **Default** | Do not claim a tree advantage for CoT until flat GRPO on the same reasoning domain is working reliably |
 | **Rationale** | Coding GRPO should serve as the infrastructure proving ground. Reasoning experiments should first establish that plain diffusion GRPO works at all before layering on tree search. |
+
+**Your Notes**:
+> _(paste responses here)_
+
+---
+
+## D-031: System Message & Chat Template — Training vs DiffuCoder-Aligned Eval
+
+| Field | Value |
+|-------|-------|
+| **Status** | `OPEN` |
+| **Default** | For **EvalPlus / literature comparison**, use the DiffuCoder-aligned templates in `dream/src/eval_prompts.py` (system message `"You are a helpful assistant."`, user fences, assistant prefill through `` ```python\n``). Training pipelines may still use `build_code_task_prompt` + `apply_chat_template` without that system message — **do not silently assume train and eval prompts match.** |
+| **Rationale** | DiffuCoder’s reported numbers use `qwencoder-eval` with explicit system + assistant prefill. Our GRPO training defaults (`dream/src/formatting.py`, tree builders) follow a different user message shape. Evaluating with DiffuCoder-style prompts while training without the same distribution can depress or shift pass@k; the gap should be acknowledged in write-ups and optionally closed by aligning training prompts or reporting both conditions. |
 
 **Your Notes**:
 > _(paste responses here)_

@@ -33,83 +33,57 @@ Updated: 2026-03-26
 - Dataset-aware runners: `dream/scripts/run_dream_comparison.py`, `dream/scripts/single_step_dream.py`
 - Sample datasets: `dream/data/code_grpo_{train,dev}.sample.jsonl`
 
-### Environment scale-up (PLAN_03, Steps 1-4 partial)
+### Environment scale-up (PLAN_03, Steps 1-5)
 
-- Container sandbox: `dream/sandbox/Dockerfile` + `entrypoint.py` (dual assertion/args_expected modes)
-- AceCode-89K converter: `dream/scripts/convert_acecode.py` (DiffuCoder-aligned filtering)
-- HumanEval/MBPP converters: `dream/scripts/convert_humaneval.py`, `dream/scripts/convert_mbpp.py`
-- Shared conversion logic: `dream/src/eval_dataset_convert.py` (assertion extraction, `candidate` rewrite)
-- Evaluation protocol doc: `dream/docs/EVAL_PROTOCOL.md`
+- **Container sandbox** (Step 1): `dream/sandbox/Dockerfile` + `entrypoint.py` — dual assertion/args_expected modes. Image pushed to `scottbiggs2001/dream-sandbox:latest`. Verified locally (Docker) and on HPC (Apptainer).
+- **AceCode-89K converter** (Step 2): `dream/scripts/convert_acecode.py` — DiffuCoder-aligned filtering, `--limit` flag for partial downloads. Verified on HPC: 972 train / 51 dev tasks (with `--limit 5000`).
+- **HumanEval/MBPP converters** (Step 3): `dream/scripts/convert_humaneval.py` (164 tasks), `dream/scripts/convert_mbpp.py` (378 tasks, merges `test_list` from sanitized MBPP). Verified on HPC.
+- **Evaluation protocol** (Step 4): `dream/docs/EVAL_PROTOCOL.md`
+- **DiffuCoder-aligned EvalPlus harness**: `dream/src/eval_prompts.py` (paper Tables 5–6 templates), `dream/src/eval_generate.py` (shared `diffusion_generate` loop + JSONL writer), `dream/scripts/eval_humaneval.py`, `dream/scripts/eval_mbpp.py` (optional `--run-evalplus`). See `research_decisions.md` **D-031** for training vs eval prompt mismatch.
+- **Execution backends** (Step 5): `dream/src/execution_backends.py` — `ExecutionBackend` ABC with `SubprocessBackend` and `ContainerBackend` (Docker + Apptainer). Wired into `rewards.py` via optional `backend` param. Training scripts accept `--execution-backend` and `--sandbox-image` flags.
 
 ## Verified Locally
 
-- `python -m pytest dream/tests -q` — 17 tests pass (task registry, formatting, rewards, observability, dataset conversion)
+- `python -m pytest dream/tests -q` — **57 tests pass** (task registry, formatting, rewards, observability, dataset conversion, execution backends incl. live Docker, DiffuCoder-aligned eval prompts)
 - `python dream/scripts/check_reward_pipeline.py` on sample dataset
-- Dataset-backed reward lookup with execution against starter code
+- Container sandbox: Docker build + assertion/args_expected/failure modes all correct
 
 ## Verified on GPU / HPC
 
 1. **Single-step tree GRPO** — `single_step_dream.py` with sample JSONL: Dream 7B loads, diversity metrics present, execution-shaped rewards nonzero
 2. **Flat GRPO baseline** — `run_dream_comparison.py --phase grpo_lora_baseline`: finite metrics, `workload_source=dataset`
+3. **Data converters** — AceCode, HumanEval, MBPP all produce correct JSONL on HPC
+4. **Apptainer sandbox** — `dream-sandbox.sif` pulled and tested on Explorer
 
 If `--dataset` / `--reward` flags are unrecognized, see `dream/HPC_SYNC.md`.
 
 ## What's Next (PLAN_03)
 
-### Remaining steps for HPC execution
+### Still to implement
 
-**Step 0 — Install dependencies** (once, from repo root):
+- End-to-end training validation at AceCode scale (100-task subset)
 
-```bash
-pip install -r dream/requirements.txt
-```
-
-**Step 1 — Run AceCode converter** (needs network for HuggingFace download):
+### Next HPC execution: training with container backend
 
 ```bash
-# Full dataset (~19K train after filtering):
-python dream/scripts/convert_acecode.py \
-  --output-dir /scratch/biggs.s/dream_data/ --difficulty hard --dev-frac 0.05
+# Using AceCode data with container execution on HPC:
+python dream/scripts/run_dream_comparison.py \
+  --phase grpo_lora_baseline --device cuda \
+  --dataset /scratch/biggs.s/dream_data/acecode_hard_train.jsonl \
+  --dataset-split train --reward execution_shaped \
+  --execution-backend apptainer \
+  --sandbox-image /scratch/biggs.s/containers/dream-sandbox.sif \
+  --lora --max-tasks 10 --num_epochs 1 \
+  --max_tree_nodes 8 --max_new_tokens 128 --no_wandb
 
-# Quick test (first 5000 rows only, much faster):
-python dream/scripts/convert_acecode.py \
-  --output-dir /scratch/biggs.s/dream_data/ --difficulty hard --dev-frac 0.05 --limit 5000
+# Or with subprocess backend (no container, simpler):
+python dream/scripts/run_dream_comparison.py \
+  --phase grpo_lora_baseline --device cuda \
+  --dataset /scratch/biggs.s/dream_data/acecode_hard_train.jsonl \
+  --dataset-split train --reward execution_shaped \
+  --lora --max-tasks 10 --num_epochs 1 \
+  --max_tree_nodes 8 --max_new_tokens 128 --no_wandb
 ```
-
-**Step 2 — Run HumanEval/MBPP converters**:
-
-```bash
-python dream/scripts/convert_humaneval.py --output /scratch/biggs.s/dream_data/humaneval.jsonl
-python dream/scripts/convert_mbpp.py      --output /scratch/biggs.s/dream_data/mbpp.jsonl
-# Expect: 164 HumanEval tasks, ~378 MBPP tasks, all split=eval
-```
-
-**Step 3 — Build and test container sandbox** (local Docker):
-
-```bash
-docker build -t dream-sandbox:latest dream/sandbox/
-# Test assertion mode:
-echo '{"code":"def add(a,b): return a+b","test_cases":["assert add(1,2)==3"],"test_format":"assertion"}' \
-  | docker run -i --rm --network=none dream-sandbox:latest
-# Should print: 1.0
-```
-
-**Step 4 — Pull sandbox on HPC** (Apptainer):
-
-```bash
-srun --constraint=ib -p short --pty /bin/bash
-cd /projects/$GROUP/container_images
-mkdir -p cache tmp
-export APPTAINER_CACHEDIR=$(pwd)/cache APPTAINER_TMPDIR=$(pwd)/tmp
-apptainer pull dream-sandbox.sif docker://scottbiggs2001/dream-sandbox:latest
-```
-
-### Still to implement (code changes needed)
-
-- `dream/src/execution_backends.py` — pluggable backend ABC (`SubprocessBackend`, `ContainerBackend`)
-- `dream/scripts/eval_humaneval.py`, `dream/scripts/eval_mbpp.py` — generate completions + run EvalPlus
-- Wire `--execution-backend` flag into training scripts
-- End-to-end validation at AceCode scale (100-task subset)
 
 See `dream/PLAN_03_ENVIRONMENT_SCALEUP.md` for full details, failure modes, and delegation guide.
 
@@ -144,4 +118,24 @@ python dream/scripts/run_dream_comparison.py \
 python dream/scripts/check_reward_pipeline.py \
   --dataset dream/data/code_grpo_train.sample.jsonl \
   --dataset-split train --reward execution_shaped --max-tasks 3
+```
+
+### EvalPlus (DiffuCoder-aligned prompts; GPU)
+
+HumanEval+ / MBPP+ JSONL for `evalplus.evaluate` — use converted `humaneval.jsonl` / `mbpp.jsonl` (see `convert_humaneval.py` / `convert_mbpp.py`). `starter_code` / `instruction` slots match DiffuCoder’s `{prompt}` usage.
+
+```bash
+# Smoke (2 tasks), pass@1-style defaults
+python dream/scripts/eval_humaneval.py \
+  --model Dream-org/Dream-v0-Instruct-7B \
+  --dataset /path/to/humaneval.jsonl \
+  --output /path/to/humaneval_completions.jsonl \
+  --max-tasks 2 --n-samples 1 --temperature 0.2
+
+# Full run + EvalPlus scoring (requires evalplus on PATH)
+python dream/scripts/eval_mbpp.py \
+  --dataset /path/to/mbpp.jsonl \
+  --output /path/to/mbpp_completions.jsonl \
+  --n-samples 10 --temperature 0.4 \
+  --run-evalplus
 ```

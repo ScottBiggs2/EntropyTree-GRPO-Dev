@@ -45,6 +45,7 @@ _configure_hf_cache()
 import torch
 
 from dream.src.config import MCTSConfig
+from dream.src.execution_backends import make_backend
 from dream.src.rewards import build_reward_function
 from dream.src.task_registry import filter_code_tasks, infer_default_split, load_code_tasks
 from dream.src.utils import load_model_and_tokenizer
@@ -89,6 +90,19 @@ def main():
         type=float,
         default=2.0,
         help="Timeout in seconds for execution-backed rewards.",
+    )
+    p.add_argument(
+        "--execution-backend",
+        type=str,
+        default="subprocess",
+        choices=("subprocess", "docker", "apptainer"),
+        help="Execution backend for code rewards (default: subprocess).",
+    )
+    p.add_argument(
+        "--sandbox-image",
+        type=str,
+        default="dream-sandbox:latest",
+        help="Docker image or Apptainer .sif path for container backend.",
     )
     p.add_argument(
         "--model",
@@ -231,11 +245,19 @@ def main():
         optimizer = torch.optim.SGD(model.parameters(), lr=cfg.learning_rate)
     else:
         optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate)
+    backend = None
+    if args.execution_backend != "subprocess":
+        backend = make_backend(
+            args.execution_backend,
+            image=args.sandbox_image,
+            project_root=_repo_root,
+        )
     reward_fn = build_reward_function(
         args.reward,
         registry_path=args.dataset or None,
         timeout=args.reward_timeout,
         project_root=_repo_root,
+        backend=backend,
     )
     trainer = EntropyMCTSTrainer(model, tokenizer, cfg, reward_fn, optimizer)
 

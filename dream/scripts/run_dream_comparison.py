@@ -62,6 +62,7 @@ import torch
 DEFAULT_CHECKPOINT_ROOT = "/scratch/biggs.s/entropy_tree_grpo_dream"
 
 from dream.src.config import MCTSConfig
+from dream.src.execution_backends import make_backend
 from dream.src.rewards import build_reward_function
 from dream.src.task_registry import filter_code_tasks, infer_default_split, load_code_tasks
 from dream.src.trainer import BaselineGRPOTrainer, EntropyMCTSTrainer
@@ -211,6 +212,19 @@ def main() -> int:
         type=float,
         default=2.0,
         help="Timeout in seconds for execution-backed rewards.",
+    )
+    p.add_argument(
+        "--execution-backend",
+        type=str,
+        default="subprocess",
+        choices=("subprocess", "docker", "apptainer"),
+        help="Execution backend for code rewards (default: subprocess).",
+    )
+    p.add_argument(
+        "--sandbox-image",
+        type=str,
+        default="dream-sandbox:latest",
+        help="Docker image or Apptainer .sif path for container backend.",
     )
     p.add_argument("--max_tree_nodes", type=int, default=8)
     p.add_argument("--branch_width", type=int, default=2)
@@ -433,11 +447,19 @@ def main() -> int:
         if cfg.gradient_checkpointing and hasattr(model, "gradient_checkpointing_enable"):
             model.gradient_checkpointing_enable()
 
+        backend = None
+        if args.execution_backend != "subprocess":
+            backend = make_backend(
+                args.execution_backend,
+                image=args.sandbox_image,
+                project_root=_repo_root,
+            )
         reward_fn = build_reward_function(
             args.reward,
             registry_path=dataset_path or None,
             timeout=args.reward_timeout,
             project_root=_repo_root,
+            backend=backend,
         )
         optimizer = torch.optim.AdamW(
             (p for p in model.parameters() if p.requires_grad),
