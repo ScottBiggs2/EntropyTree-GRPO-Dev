@@ -9,7 +9,7 @@
 # Optional environment overrides (export before sbatch):
 #   HUMANEVAL_JSONL   HumanEval+ JSONL from convert_humaneval (default: /scratch/$USER/dream_data/humaneval.jsonl)
 #   MBPP_JSONL        MBPP+ JSONL (default: /scratch/$USER/dream_data/mbpp.jsonl)
-#   SKIP_EVALPLUS=1   Do not run evalplus.evaluate on smoke JSONL
+#   SKIP_EVALPLUS=1   Default; smoke JSONL cannot be scored (see below)
 #   VERIFY_STRICT=1   Exit non-zero if eval dataset files or evalplus are missing/fail
 #
 # Uses one GPU sequentially (validate_dream + eval smokes). Do not run another
@@ -150,25 +150,22 @@ else
 fi
 
 echo "================================"
-echo "6) evalplus.evaluate on smoke JSONL (optional)"
+echo "6) evalplus.evaluate (skipped by default for smoke)"
 echo "================================"
-if [ "${SKIP_EVALPLUS:-0}" = "1" ]; then
-  echo "SKIP_EVALPLUS=1 set"
-elif [ -f "$HE_OUT" ] && [ -s "$HE_OUT" ]; then
+# EvalPlus requires completions for *every* benchmark task (e.g. 164 HumanEval+ lines for
+# pass@1). A 2-line smoke file always fails with: Missing problems in samples.
+# Full scoring: sbatch eval_base_dream_evalplus.sbatch
+if [ "${VERIFY_RUN_EVALPLUS:-0}" = "1" ] && [ "${SKIP_EVALPLUS:-0}" != "1" ] && [ -f "$HE_OUT" ] && [ -s "$HE_OUT" ]; then
   set +e
   python -m evalplus.evaluate --dataset humaneval --samples "$HE_OUT"
   ep_rc=$?
-  if [ "$ep_rc" -ne 0 ] && command -v evalplus.evaluate &>/dev/null; then
-    evalplus.evaluate --dataset humaneval --samples "$HE_OUT"
-    ep_rc=$?
-  fi
   set -e
   if [ "$ep_rc" -ne 0 ]; then
-    echo "WARN: evalplus.evaluate exited ${ep_rc} (pip install evalplus, or SKIP_EVALPLUS=1)"
+    echo "WARN: evalplus exited ${ep_rc}"
     if [ "${VERIFY_STRICT:-0}" = "1" ]; then on_fail "evalplus humaneval"; fi
   fi
 else
-  echo "SKIP: no HumanEval smoke JSONL (step 5 did not produce $HE_OUT)"
+  echo "SKIP: use eval_base_dream_evalplus.sbatch for EvalPlus (VERIFY_RUN_EVALPLUS=1 forces this step — needs full JSONL)"
 fi
 
 echo "================================"

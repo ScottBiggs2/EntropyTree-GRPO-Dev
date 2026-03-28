@@ -122,7 +122,9 @@ python dream/scripts/check_reward_pipeline.py \
 
 ### EvalPlus (DiffuCoder-aligned prompts; GPU)
 
-HumanEval+ / MBPP+ JSONL for `evalplus.evaluate` — use converted `humaneval.jsonl` / `mbpp.jsonl` (see `convert_humaneval.py` / `convert_mbpp.py`). `starter_code` / `instruction` slots match DiffuCoder’s `{prompt}` usage.
+HumanEval+ / MBPP+ JSONL for `evalplus.evaluate` — use converted `humaneval.jsonl` / `mbpp.jsonl` (see `convert_humaneval.py` / `convert_mbpp.py`). `starter_code` / `instruction` slots match DiffuCoder’s `{prompt}` usage. EvalPlus needs **all** tasks in the file for scoring (not a 2-line smoke); use the batch driver below for full pass@k.
+
+**Full benchmark (base Dream + EvalPlus, literature-fair prompts):** from repo root, `sbatch eval_base_dream_evalplus.sbatch` (outputs under `/scratch/$USER/dream_eval/base_<jobid>/`). Optional: `RUN_PASS10=1`, `ADAPTER=/path/to/lora`. Compare to Apple DiffuCoder paper under the same template; that job does **not** run the DiffuCoder checkpoint.
 
 ```bash
 # Smoke (2 tasks), pass@1-style defaults

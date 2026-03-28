@@ -162,6 +162,8 @@ evalplus.evaluate --dataset mbpp --samples path/to/mbpp_completions.jsonl
 
 Use `evalplus.evaluate --help` for backend flags and dataset names for your installed version.
 
+**Full coverage**: `evalplus.evaluate` expects the samples JSONL to include **every** task in that benchmark (e.g. all 164 HumanEval+ tasks for pass@1, or 164×10 lines for pass@10). A partial file (smoke test) raises `AssertionError: Missing problems in samples`. For subset evaluation, EvalPlus supports overriding the problem set via an environment variable (see [evalplus#21](https://github.com/evalplus/evalplus/issues/21)); otherwise use the full-batch driver `eval_base_dream_evalplus.sbatch` at the repo root.
+
 ### 6.3 Python API
 
 ```python
