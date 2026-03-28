@@ -47,12 +47,11 @@ elif [ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]; then
   # shellcheck source=/dev/null
   source "$HOME/anaconda3/etc/profile.d/conda.sh"
 fi
-if [ -n "${CONDA_PREFIX:-}" ]; then
-  echo "CONDA_PREFIX already set: $CONDA_PREFIX"
-else
-  conda activate EntropyTreeGRPO_Dream_env
-fi
+# Always activate the Dream env. Slurm may inherit `base` from the login shell;
+# skipping activate used the wrong Python (e.g. 3.13) and broke torch/torchvision pins.
+conda activate EntropyTreeGRPO_Dream_env
 
+echo "CONDA_DEFAULT_ENV=${CONDA_DEFAULT_ENV:-} CONDA_PREFIX=${CONDA_PREFIX:-}"
 echo "PYTHON=$(command -v python)"
 python -c "import sys; print(sys.executable, sys.version.split()[0])"
 
