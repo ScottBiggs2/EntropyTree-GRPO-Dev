@@ -101,7 +101,7 @@ srun --constraint=ib -p short --pty /bin/bash
 cd /projects/$GROUP/container_images
 mkdir -p cache tmp
 export APPTAINER_CACHEDIR=$(pwd)/cache APPTAINER_TMPDIR=$(pwd)/tmp
-apptainer pull dream-sandbox.sif docker://YOUR_DOCKERHUB/dream-sandbox:latest
+apptainer pull dream-sandbox.sif docker://scottbiggs2001/dream-sandbox:latest
 ```
 
 ### Still to implement (code changes needed)
