@@ -87,6 +87,8 @@ python dream/scripts/run_dream_comparison.py \
 
 See `dream/PLAN_03_ENVIRONMENT_SCALEUP.md` for full details, failure modes, and delegation guide.
 
+**Batch smoke (sandbox + sample JSONL, no AceCode required):** from repo root, `sbatch train_sandbox_smoke.sbatch` — uses `dream/data/code_grpo_train.sample.jsonl`, `--execution-backend apptainer`, and `/scratch/$USER/containers/dream-sandbox.sif` by default. Override `DATASET`, `MAX_TASKS`, `SAVE_CHECKPOINTS=1`, etc. See script header.
+
 ## Reference Commands (GPU)
 
 ### Single-step tree smoke

@@ -26,8 +26,8 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:a100:1
-#SBATCH --mem=64G
-#SBATCH --time=24:00:00
+#SBATCH --mem=128
+#SBATCH --time=8:00:00
 
 set -euo pipefail
 
