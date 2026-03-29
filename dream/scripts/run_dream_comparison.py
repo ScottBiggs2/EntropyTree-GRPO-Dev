@@ -332,7 +332,7 @@ def main() -> int:
         branch_width=args.branch_width,
         steps_per_expansion=args.steps_per_expansion,
         max_new_tokens=args.max_new_tokens,
-        total_denoising_steps=min(256, args.max_new_tokens),
+        total_denoising_steps=max(256, args.max_new_tokens),
         adaptive_stepping=adaptive,
         min_steps_per_expansion=args.min_steps_per_expansion,
         max_steps_per_expansion=args.max_steps_per_expansion,

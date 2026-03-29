@@ -163,9 +163,15 @@ class EntropyGuidedTreeBuilder:
     # ---- Expansion / denoising ----
 
     def _expand_node(self, node: MCTSNode) -> List[MCTSNode]:
-        """Create children by running a denoising chunk from this node."""
+        """Create children by running a denoising chunk from this node.
+
+        Uses ``train_sampling_temperature`` (if > 0) to promote diversity
+        across sibling branches.
+        """
         children: List[MCTSNode] = []
-        temp = self._node_temperature(node)
+        base_temp = self._node_temperature(node)
+        train_temp = getattr(self.config, "train_sampling_temperature", 0.0)
+        temp = train_temp if train_temp > 0 else base_temp
         for _ in range(self.config.branch_width):
             if self.config.adaptive_stepping:
                 child = self._denoise_chunk_adaptive(
@@ -202,7 +208,13 @@ class EntropyGuidedTreeBuilder:
     def _denoise_chunk(
         self, node: MCTSNode, num_steps: int, temperature: float
     ) -> MCTSNode:
-        """Run fixed-step denoising from node; return child node."""
+        """Run fixed-step denoising from node; return child node.
+
+        The per-step unmasking rate is derived from the *global* denoising
+        schedule (total_denoising_steps), not the per-expansion budget.
+        This ensures each expansion only partially denoises, leaving masked
+        tokens for deeper tree levels.
+        """
         state = node.state.clone()
         attn = node.attention_mask.clone()
         prompt_len = node.prompt_len
@@ -210,6 +222,7 @@ class EntropyGuidedTreeBuilder:
         response_region = torch.zeros_like(state, dtype=torch.bool)
         response_region[prompt_len : prompt_len + max_new] = True
 
+        total_T = self.config.total_denoising_steps
         steps_taken = 0
         with torch.no_grad():
             for step in range(num_steps):
@@ -217,8 +230,10 @@ class EntropyGuidedTreeBuilder:
                 n_masked = int(mask_now.sum().item())
                 if n_masked == 0:
                     break
-                steps_left = num_steps - step
-                k = max(1, n_masked // max(steps_left, 1))
+                global_step = node.step_index + step
+                k = self.adapter.transfer_count(
+                    n_masked, global_step, total_T
+                )
 
                 logits = self.adapter.forward_logits(
                     state.unsqueeze(0), attn.unsqueeze(0)
@@ -250,7 +265,11 @@ class EntropyGuidedTreeBuilder:
         branch_threshold: float,
         temperature: float,
     ) -> MCTSNode:
-        """Entropy-threshold adaptive stepping."""
+        """Entropy-threshold adaptive stepping.
+
+        Per-step unmasking uses the *global* denoising schedule so that each
+        expansion only partially denoises the response.
+        """
         state = node.state.clone()
         attn = node.attention_mask.clone()
         prompt_len = node.prompt_len
@@ -258,6 +277,7 @@ class EntropyGuidedTreeBuilder:
         response_region = torch.zeros_like(state, dtype=torch.bool)
         response_region[prompt_len : prompt_len + max_new] = True
 
+        total_T = self.config.total_denoising_steps
         steps_taken = 0
         with torch.no_grad():
             for step in range(max_steps):
@@ -278,8 +298,9 @@ class EntropyGuidedTreeBuilder:
                 x0_pred, conf = self.adapter.sample_and_confidence(
                     logits, mask_now, temperature, self.config.top_p
                 )
+                global_step = node.step_index + step
                 k = self.adapter.transfer_count(
-                    n_masked, step, max_steps
+                    n_masked, global_step, total_T
                 )
                 x0_pred = torch.where(mask_now, x0_pred, state)
                 _, sel = torch.topk(conf, k=min(k, n_masked))
@@ -329,13 +350,19 @@ class EntropyGuidedTreeBuilder:
             self._fill_missing_entropy(child)
 
     def generate_one_trajectory(
-        self, prompt: str
+        self,
+        prompt: str,
+        temperature_override: float = 0.0,
     ) -> Tuple[str, List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]]:
         """Generate one full completion without MCTS; record mask→token transitions for GRPO.
 
         Uses the same iterative unmasking loop as ``_denoise_to_completion`` (Dream
         adapter logits + ``sample_and_confidence``), not ``diffusion_generate``,
         so training-time log-probs stay consistent with the tree stack.
+
+        Args:
+            temperature_override: if > 0, use this instead of config.temperature
+                to promote diversity across K baseline samples.
         """
         root = self._create_root(prompt)
         state = root.state.clone()
@@ -345,7 +372,7 @@ class EntropyGuidedTreeBuilder:
         response_region = torch.zeros_like(state, dtype=torch.bool, device=state.device)
         response_region[prompt_len : prompt_len + max_new] = True
         transitions: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
-        temperature = self.config.temperature
+        temperature = temperature_override if temperature_override > 0 else self.config.temperature
 
         with torch.no_grad():
             while True:

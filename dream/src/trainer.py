@@ -73,7 +73,10 @@ class BaselineGRPOTrainer:
         self.model.eval()
         trajectories = []
         for _ in range(K):
-            completion, trans = self.tree_builder.generate_one_trajectory(prompt)
+            completion, trans = self.tree_builder.generate_one_trajectory(
+                prompt,
+                temperature_override=self.config.train_sampling_temperature,
+            )
             trajectories.append((completion, trans))
         rewards = [self.reward_fn(c, prompt) for c, _ in trajectories]
         mean_reward = sum(rewards) / len(rewards) if rewards else 0.0
@@ -88,10 +91,18 @@ class BaselineGRPOTrainer:
             best_idx = rewards.index(max(rewards)) if rewards else 0
             sample = trajectories[best_idx][0] if trajectories else ""
             preview = sample[:200].replace("\n", "\\n")
+            n_unique = len(set(round(r, 6) for r in rewards))
             print(
                 f"[dream-baseline-grpo diag] prompt={prompt[:40]!r} "
-                f"rewards={[round(r, 3) for r in rewards]} best_completion={preview!r}"
+                f"rewards={[round(r, 3) for r in rewards]} "
+                f"unique_rewards={n_unique}/{K} adv_std={adv_std:.6f} "
+                f"best_completion={preview!r}"
             )
+            if adv_std < 1e-8:
+                print(
+                    "[dream-baseline-grpo WARN] all rewards identical — "
+                    "advantages are zero, no gradient this step"
+                )
 
         self.model.train()
         log_probs = []
@@ -282,11 +293,18 @@ class EntropyMCTSTrainer:
             best_idx = rewards.index(max(rewards)) if rewards else 0
             sample = completions[best_idx] if completions else ""
             preview = sample[:160].replace("\n", "\\n")
+            n_unique = len(set(round(r, 6) for r in rewards))
             print(
                 f"[dream-mcts diag] prompt={prompt[:40]!r} "
                 f"rewards={[round(r, 3) for r in rewards]} "
+                f"unique_rewards={n_unique}/{len(rewards)} "
                 f"best_completion={preview!r}"
             )
+            if n_unique < 2:
+                print(
+                    "[dream-mcts WARN] all leaf rewards identical — "
+                    "BranchGRPO advantages will be zero at each depth"
+                )
 
         self.advantage_computer.compute_advantages(
             root,
