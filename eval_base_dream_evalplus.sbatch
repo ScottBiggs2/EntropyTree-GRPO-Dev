@@ -6,6 +6,7 @@
 #
 # Submit from repo root:
 #   sbatch eval_base_dream_evalplus.sbatch
+#   sbatch --export=ALL,MAX_TASKS=8,N_SAMPLES=1 eval_base_dream_evalplus.sbatch   # quick subset
 #
 # Override paths / phases (export before sbatch):
 #   HUMANEVAL_JSONL  default /scratch/$USER/dream_data/humaneval.jsonl
@@ -13,11 +14,14 @@
 #   OUT_BASE         default /scratch/$USER/dream_eval/base_$SLURM_JOB_ID
 #   RUN_HUMANEVAL=0  skip HumanEval+ generation + scoring
 #   RUN_MBPP=0       skip MBPP+ generation + scoring
-#   RUN_PASS10=1     also run pass@10 (n-samples=10, temp=0.4) after pass@1
+#   RUN_PASS10=1     also run pass@10 (N_SAMPLES_PASS10, default 10; temp=0.4) after pass@1
 #   ADAPTER          if set, passed as --adapter to both eval scripts (trained checkpoint)
 #   EVALPLUS_BACKEND e.g. unsafe — see dream/docs/EVAL_PROTOCOL.md §6.4 (HPC often needs this)
 #   MAX_NEW_TOKENS  default 512 — diffusion length cap (CLI: --max-new-tokens)
 #   STEPS           default 32  — denoising steps (CLI: --steps); not tied to max_new_tokens
+#   MAX_TASKS       default 0 — cap tasks per benchmark (0 = all). Quick test: MAX_TASKS=8 sbatch ...
+#   N_SAMPLES       default 1 — samples per task for pass@1 sections (temperature 0.2)
+#   N_SAMPLES_PASS10 default 10 — samples per task when RUN_PASS10=1 (temperature 0.4)
 #
 # Wall time: full pass@1 is hours on one GPU (164 + 378 tasks × diffusion). Adjust --time.
 #
@@ -67,7 +71,10 @@ python -m pip install -r dream/requirements.txt -q
 
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-512}"
 STEPS="${STEPS:-32}"
-echo "MAX_NEW_TOKENS=$MAX_NEW_TOKENS  STEPS=$STEPS"
+MAX_TASKS="${MAX_TASKS:-0}"
+N_SAMPLES="${N_SAMPLES:-1}"
+N_SAMPLES_PASS10="${N_SAMPLES_PASS10:-10}"
+echo "MAX_NEW_TOKENS=$MAX_NEW_TOKENS  STEPS=$STEPS  MAX_TASKS=$MAX_TASKS  N_SAMPLES=$N_SAMPLES  N_SAMPLES_PASS10=$N_SAMPLES_PASS10"
 
 MODEL="${MODEL:-Dream-org/Dream-v0-Instruct-7B}"
 OUT_BASE="${OUT_BASE:-/scratch/${USER}/dream_eval/base_${SLURM_JOB_ID}}"
@@ -96,7 +103,7 @@ run_evalplus() {
 # --- pass@1 (DiffuCoder-style defaults in our drivers) ---
 if [ "${RUN_HUMANEVAL:-1}" = "1" ]; then
   echo "================================"
-  echo "HumanEval+  pass@1  (n=1, temp=0.2)"
+  echo "HumanEval+  pass@1  (n=${N_SAMPLES}, temp=0.2)"
   echo "================================"
   HE_P1="${OUT_BASE}/humaneval_pass1.jsonl"
   python dream/scripts/eval_humaneval.py \
@@ -104,8 +111,8 @@ if [ "${RUN_HUMANEVAL:-1}" = "1" ]; then
     "${ADAPTER_ARGS[@]}" \
     --dataset "$HUMANEVAL_JSONL" \
     --output "$HE_P1" \
-    --max-tasks 0 \
-    --n-samples 1 \
+    --max-tasks "$MAX_TASKS" \
+    --n-samples "$N_SAMPLES" \
     --temperature 0.2 \
     --max-new-tokens "$MAX_NEW_TOKENS" \
     --steps "$STEPS"
@@ -116,7 +123,7 @@ fi
 
 if [ "${RUN_MBPP:-1}" = "1" ]; then
   echo "================================"
-  echo "MBPP+  pass@1  (n=1, temp=0.2)"
+  echo "MBPP+  pass@1  (n=${N_SAMPLES}, temp=0.2)"
   echo "================================"
   MB_P1="${OUT_BASE}/mbpp_pass1.jsonl"
   python dream/scripts/eval_mbpp.py \
@@ -124,11 +131,11 @@ if [ "${RUN_MBPP:-1}" = "1" ]; then
     "${ADAPTER_ARGS[@]}" \
     --dataset "$MBPP_JSONL" \
     --output "$MB_P1" \
-    --max-tasks 0 \
-    --n-samples 1 \
+    --max-tasks "$MAX_TASKS" \
+    --n-samples "$N_SAMPLES" \
     --temperature 0.2 \
-    --max-new-tokens 256 \
-    --steps 256
+    --max-new-tokens "$MAX_NEW_TOKENS" \
+    --steps "$STEPS"
   run_evalplus mbpp "$MB_P1" "${OUT_BASE}/evalplus_mbpp_pass1.log"
 else
   echo "SKIP RUN_MBPP=0"
@@ -137,7 +144,7 @@ fi
 # --- pass@10 (optional; long) ---
 if [ "${RUN_PASS10:-0}" = "1" ]; then
   echo "================================"
-  echo "HumanEval+  pass@10  (n=10, temp=0.4)"
+  echo "HumanEval+  pass@10  (n=${N_SAMPLES_PASS10}, temp=0.4)"
   echo "================================"
   HE_P10="${OUT_BASE}/humaneval_pass10.jsonl"
   python dream/scripts/eval_humaneval.py \
@@ -145,15 +152,15 @@ if [ "${RUN_PASS10:-0}" = "1" ]; then
     "${ADAPTER_ARGS[@]}" \
     --dataset "$HUMANEVAL_JSONL" \
     --output "$HE_P10" \
-    --max-tasks 0 \
-    --n-samples 10 \
+    --max-tasks "$MAX_TASKS" \
+    --n-samples "$N_SAMPLES_PASS10" \
     --temperature 0.4 \
     --max-new-tokens "$MAX_NEW_TOKENS" \
     --steps "$STEPS"
   run_evalplus humaneval "$HE_P10" "${OUT_BASE}/evalplus_humaneval_pass10.log"
 
   echo "================================"
-  echo "MBPP+  pass@10  (n=10, temp=0.4)"
+  echo "MBPP+  pass@10  (n=${N_SAMPLES_PASS10}, temp=0.4)"
   echo "================================"
   MB_P10="${OUT_BASE}/mbpp_pass10.jsonl"
   python dream/scripts/eval_mbpp.py \
@@ -161,8 +168,8 @@ if [ "${RUN_PASS10:-0}" = "1" ]; then
     "${ADAPTER_ARGS[@]}" \
     --dataset "$MBPP_JSONL" \
     --output "$MB_P10" \
-    --max-tasks 0 \
-    --n-samples 10 \
+    --max-tasks "$MAX_TASKS" \
+    --n-samples "$N_SAMPLES_PASS10" \
     --temperature 0.4 \
     --max-new-tokens "$MAX_NEW_TOKENS" \
     --steps "$STEPS"

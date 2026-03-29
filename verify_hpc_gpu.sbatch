@@ -4,11 +4,14 @@
 #
 #   cd /path/to/EntropyTree-GRPO
 #   sbatch verify_hpc_gpu.sbatch
+#   sbatch --export=ALL,VERIFY_MAX_TASKS=4,VERIFY_N_SAMPLES=2 verify_hpc_gpu.sbatch
 #   tail -f verify_hpc_gpu_<jobid>.out
 #
 # Optional environment overrides (export before sbatch):
 #   HUMANEVAL_JSONL   HumanEval+ JSONL from convert_humaneval (default: /scratch/$USER/dream_data/humaneval.jsonl)
 #   MBPP_JSONL        MBPP+ JSONL (default: /scratch/$USER/dream_data/mbpp.jsonl)
+#   VERIFY_MAX_TASKS  default 2 — --max-tasks for step 5 eval smokes
+#   VERIFY_N_SAMPLES  default 1 — --n-samples for step 5 eval smokes
 #   SKIP_EVALPLUS=1   Default; smoke JSONL cannot be scored (see below)
 #   VERIFY_STRICT=1   Exit non-zero if eval dataset files or evalplus are missing/fail
 #
@@ -110,9 +113,11 @@ VERIFY_ROOT="${VERIFY_ROOT:-/scratch/${USER}/dream_verify_${SLURM_JOB_ID:-local}
 mkdir -p "$VERIFY_ROOT"
 HUMANEVAL_JSONL="${HUMANEVAL_JSONL:-/scratch/${USER}/dream_data/humaneval.jsonl}"
 MBPP_JSONL="${MBPP_JSONL:-/scratch/${USER}/dream_data/mbpp.jsonl}"
+VERIFY_MAX_TASKS="${VERIFY_MAX_TASKS:-2}"
+VERIFY_N_SAMPLES="${VERIFY_N_SAMPLES:-1}"
 
 echo "================================"
-echo "5) DiffuCoder-aligned eval smoke (2 tasks each)"
+echo "5) DiffuCoder-aligned eval smoke (max_tasks=${VERIFY_MAX_TASKS}, n_samples=${VERIFY_N_SAMPLES})"
 echo "================================"
 HE_OUT="${VERIFY_ROOT}/humaneval_smoke.jsonl"
 MB_OUT="${VERIFY_ROOT}/mbpp_smoke.jsonl"
@@ -122,8 +127,8 @@ if [ -f "$HUMANEVAL_JSONL" ]; then
     --model Dream-org/Dream-v0-Instruct-7B \
     --dataset "$HUMANEVAL_JSONL" \
     --output "$HE_OUT" \
-    --max-tasks 2 \
-    --n-samples 1 \
+    --max-tasks "$VERIFY_MAX_TASKS" \
+    --n-samples "$VERIFY_N_SAMPLES" \
     --temperature 0.2 \
     --max-new-tokens 512 \
     --steps 32 \
@@ -139,8 +144,8 @@ if [ -f "$MBPP_JSONL" ]; then
     --model Dream-org/Dream-v0-Instruct-7B \
     --dataset "$MBPP_JSONL" \
     --output "$MB_OUT" \
-    --max-tasks 2 \
-    --n-samples 1 \
+    --max-tasks "$VERIFY_MAX_TASKS" \
+    --n-samples "$VERIFY_N_SAMPLES" \
     --temperature 0.2 \
     --max-new-tokens 512 \
     --steps 32 \
