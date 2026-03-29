@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Sequence, Tuple, Union
 
@@ -72,20 +73,36 @@ def generate_completions(
     slot_from_task: Callable[[CodeTask], str],
     n_samples: int = 1,
     max_new_tokens: int = 512,
-    steps: int = 512,
+    steps: int = 32,
     temperature: float = 0.2,
     top_p: float = 0.95,
     alg: str = "entropy",
     alg_temp: float = 0.0,
     device: Optional[str] = None,
+    completion_postprocess: Optional[Callable[[CodeTask, str], str]] = None,
+    quiet: bool = False,
 ) -> List[Tuple[str, str]]:
-    """Generate ``n_samples`` completions per task; return ``(task_id, completion)`` rows."""
+    """Generate ``n_samples`` completions per task; return ``(task_id, completion)`` rows.
+
+    ``completion_postprocess`` can adjust text before JSONL export (e.g. HumanEval
+    body-only for EvalPlus ``prompt + completion``).
+
+    Slurm / batch jobs often buffer ``tqdm``; when ``quiet`` is False we print one
+    flushed line per task so ``tail -f`` on the job log shows steady progress.
+    """
     dev = torch.device(device) if device else next(model.parameters()).device
 
     out: List[Tuple[str, str]] = []
-    iterator = _try_tqdm(list(tasks), desc="Generating")
+    task_list = list(tasks)
+    # tqdm is useless in Slurm (non-TTY, buffered); prefer line-based [eval-gen] logs.
+    try:
+        _tty = sys.stderr.isatty()
+    except Exception:
+        _tty = False
+    iterator = _try_tqdm(task_list, desc="Generating") if (_tty and not quiet) else task_list
 
-    for task in iterator:
+    for ti, task in enumerate(iterator):
+        t_task0 = time.perf_counter()
         slot = slot_from_task(task)
         full_prompt = prompt_builder(slot)
         enc = tokenizer(
@@ -118,7 +135,18 @@ def generate_completions(
             gen_ids = seq[prompt_len:]
             raw_suffix = tokenizer.decode(gen_ids, skip_special_tokens=False)
             completion = extract_diffucoder_completion(raw_suffix)
+            if completion_postprocess is not None:
+                completion = completion_postprocess(task, completion)
             out.append((task.task_id, completion))
+
+        if not quiet:
+            wall = time.perf_counter() - t_task0
+            print(
+                f"[eval-gen] {ti + 1}/{len(task_list)} task_id={task.task_id} "
+                f"wall_s={wall:.1f} completion_chars={len(completion)}",
+                flush=True,
+                file=sys.stdout,
+            )
 
     return out
 

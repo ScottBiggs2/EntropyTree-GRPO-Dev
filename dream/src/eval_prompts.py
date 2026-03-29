@@ -10,6 +10,7 @@ See ``dream/docs/EVAL_PROTOCOL.md`` for the training vs eval distinction.
 
 from __future__ import annotations
 
+import ast
 import re
 from typing import Final
 
@@ -94,3 +95,32 @@ def extract_diffucoder_completion(generated_suffix: str) -> str:
             text = text[:idx].rstrip()
 
     return text.strip("\n\r")
+
+
+def normalize_humaneval_evalplus_completion(completion: str, entry_point: str) -> str:
+    """Make `completion` suitable for EvalPlus ``prompt + completion`` merge.
+
+    EvalPlus evaluates ``solution = problem[\"prompt\"] + completion``. If the model
+    emits a **full** ``def entry_point(...): ...`` inside the fence, concatenation
+    duplicates the stub from ``prompt`` and every task fails. When we detect a
+    single top-level function with the expected name, emit **body-only** lines
+    (4-space indented) to follow the stub in the official HumanEval ``prompt``.
+    """
+    if not (completion or "").strip() or not (entry_point or "").strip():
+        return completion
+    text = completion.strip()
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return completion
+    if len(tree.body) != 1 or not isinstance(tree.body[0], ast.FunctionDef):
+        return completion
+    fn = tree.body[0]
+    if fn.name != entry_point:
+        return completion
+    out_lines: list[str] = []
+    for stmt in fn.body:
+        block = ast.unparse(stmt)
+        for line in block.splitlines():
+            out_lines.append(f"    {line}" if line.strip() else line)
+    return ("\n".join(out_lines) + "\n") if out_lines else ""

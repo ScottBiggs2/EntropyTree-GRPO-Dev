@@ -8,6 +8,7 @@ from dream.src.eval_prompts import (
     build_humaneval_prompt,
     build_mbpp_prompt,
     extract_diffucoder_completion,
+    normalize_humaneval_evalplus_completion,
 )
 
 
@@ -80,3 +81,18 @@ def test_extract_diffucoder_completion(raw: str, want: str) -> None:
 
 def test_extract_empty() -> None:
     assert extract_diffucoder_completion("") == ""
+
+
+def test_normalize_humaneval_strips_full_def_for_evalplus_merge() -> None:
+    """EvalPlus uses prompt + completion; full-function model output must become body-only."""
+    src = "def foo(x):\n    return x + 1\n"
+    got = normalize_humaneval_evalplus_completion(src, "foo")
+    assert "def foo" not in got
+    assert "return x + 1" in got
+    assert got.splitlines()[0].startswith("    ")
+
+
+def test_normalize_humaneval_body_only_passthrough() -> None:
+    """Already-indented body (no parseable def) is unchanged."""
+    src = "    return 42\n"
+    assert normalize_humaneval_evalplus_completion(src, "foo") == src

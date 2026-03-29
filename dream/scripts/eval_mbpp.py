@@ -31,14 +31,29 @@ def main() -> int:
     parser.add_argument("--output", required=True, type=Path, help="Output EvalPlus JSONL path")
     parser.add_argument("--n-samples", type=int, default=1, help="Samples per task (1=pass@1, 10=pass@10)")
     parser.add_argument("--temperature", type=float, default=0.2, help="0.2 pass@1; 0.4 pass@10")
-    parser.add_argument("--max-new-tokens", type=int, default=512)
-    parser.add_argument("--steps", type=int, default=512)
+    parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=512,
+        help="Max generated tokens (length cap). Default 512.",
+    )
+    parser.add_argument(
+        "--steps",
+        type=int,
+        default=32,
+        help="Denoising steps for diffusion_generate (independent of max-new-tokens). Default 32.",
+    )
     parser.add_argument("--max-tasks", type=int, default=0, help="0 = all tasks")
     parser.add_argument("--device", default=None, help="cuda / cuda:0 / cpu (default: auto)")
     parser.add_argument(
         "--run-evalplus",
         action="store_true",
         help="After generation, run evalplus.evaluate on the JSONL",
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress per-task [eval-gen] progress lines",
     )
     args = parser.parse_args()
 
@@ -74,6 +89,7 @@ def main() -> int:
         alg="entropy",
         alg_temp=0.0,
         device=args.device,
+        quiet=args.quiet,
     )
 
     write_evalplus_jsonl(args.output, rows)

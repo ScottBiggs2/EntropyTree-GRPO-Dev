@@ -91,10 +91,10 @@ Dream exposes **`model.diffusion_generate`** (not HuggingFace `generate` for the
 
 Typical keyword arguments:
 
-| Argument | Role | Default for eval (plan) |
-|----------|------|-------------------------|
-| `max_new_tokens` | Response length cap | **512** (TOKEN_PER_STEP=1 ⇒ `steps` matches; see below) |
-| `steps` | Denoising steps | **512** (match `max_new_tokens` for standard Dream usage) |
+| Argument | Role | Default in `eval_humaneval.py` / `eval_mbpp.py` |
+|----------|------|--------------------------------------------------|
+| `max_new_tokens` | Max generated tokens (length cap) | **512** (CLI `--max-new-tokens`) |
+| `steps` | Diffusion denoising iterations | **32** (CLI `--steps`; independent of `max_new_tokens`) |
 | `temperature` | Sampling temperature | **0.2** for pass@1; **0.4** for pass@10 |
 | `top_p` | Nucleus sampling | **0.95** |
 | `alg` | Denoising schedule / algorithm flag | ** `"entropy"` ** |
@@ -109,8 +109,8 @@ with torch.no_grad():
     output = model.diffusion_generate(
         input_ids,
         attention_mask=attention_mask,
-        max_new_tokens=512,
-        steps=512,
+        max_new_tokens=512,  # length cap
+        steps=32,  # denoising steps (need not equal max_new_tokens)
         temperature=0.2,
         top_p=0.95,
         alg="entropy",
@@ -124,7 +124,7 @@ text = tokenizer.decode(gen_ids, skip_special_tokens=True)
 
 **LoRA / PEFT**: If evaluating an adapter, load base weights + adapter per your training checkpoint convention and run the same call on the merged or wrapped model.
 
-**Config alignment**: `dream/src/config.py` `MCTSConfig` uses `temperature=0.2`, `top_p=0.95`, `alg="entropy"`, `alg_temp=0.0`, with `max_new_tokens` / `total_denoising_steps` often 256 for *training* trees. For **EvalPlus parity with the environment plan**, prefer **512 / 512** for full-benchmark runs unless you are doing a quick smoke test (then document the shorter settings).
+**Training vs eval**: `dream/src/config.py` `MCTSConfig` uses `max_new_tokens=256` and `total_denoising_steps=256` for *tree training* — that couples length and steps for that stack. **Eval drivers** default to **`max_new_tokens=512`**, **`steps=32`** so the output budget and the diffusion depth are **CLI-configurable** and not forced to match. DiffuCoder’s paper reports **512** for both; override with `--max-new-tokens 512 --steps 512` if you need that exact protocol.
 
 ---
 
@@ -163,6 +163,10 @@ evalplus.evaluate --dataset mbpp --samples path/to/mbpp_completions.jsonl
 Use `evalplus.evaluate --help` for backend flags and dataset names for your installed version.
 
 **Full coverage**: `evalplus.evaluate` expects the samples JSONL to include **every** task in that benchmark (e.g. all 164 HumanEval+ tasks for pass@1, or 164×10 lines for pass@10). A partial file (smoke test) raises `AssertionError: Missing problems in samples`. For subset evaluation, EvalPlus supports overriding the problem set via an environment variable (see [evalplus#21](https://github.com/evalplus/evalplus/issues/21)); otherwise use the full-batch driver `eval_base_dream_evalplus.sbatch` at the repo root.
+
+**Results file**: EvalPlus writes detailed results alongside the samples path, e.g. `humaneval_pass1_eval_results.json` next to `humaneval_pass1.jsonl` (pass/fail per task, not only stdout). **HumanEval merge rule**: EvalPlus forms `solution = prompt + completion` (`evalplus/evaluate.py`); our `eval_humaneval.py` post-processes completions so a model that emits a full `def entry_point(...):` is converted to **body-only** text before JSONL export, avoiding a duplicate stub and near-zero pass rates.
+
+**Slurm logs**: Set `PYTHONUNBUFFERED=1` (included in `eval_base_dream_evalplus.sbatch`) and rely on `[eval-gen]` lines from `eval_generate.py` so `tail -f` shows per-task progress (non-TTY jobs do not show tqdm usefully).
 
 ### 6.3 Python API
 

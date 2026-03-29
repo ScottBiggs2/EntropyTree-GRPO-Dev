@@ -87,7 +87,9 @@ python dream/scripts/run_dream_comparison.py \
 
 See `dream/PLAN_03_ENVIRONMENT_SCALEUP.md` for full details, failure modes, and delegation guide.
 
-**Batch smoke (sandbox + sample JSONL, no AceCode required):** from repo root, `sbatch train_sandbox_smoke.sbatch` — uses `dream/data/code_grpo_train.sample.jsonl`, `--execution-backend apptainer`, and `/scratch/$USER/containers/dream-sandbox.sif` by default. Override `DATASET`, `MAX_TASKS`, `SAVE_CHECKPOINTS=1`, etc. See script header.
+**Batch smoke (sandbox + sample JSONL, no AceCode required):** from repo root, `sbatch train_sandbox_smoke.sbatch` — mirrors `run_dream_comparison.sh` (conda, pip, **W&B on by default**, resolved config echoed). Set `WANDB_API_KEY` before submit; `USE_WANDB=0` for `--no_wandb`. Defaults: `dream/data/code_grpo_train.sample.jsonl`, Apptainer + `/scratch/$USER/containers/dream-sandbox.sif`. See script header for all env vars (`RUN_NAME`, `WANDB_GROUP`, hyperparameters, `SAVE_CHECKPOINTS`, …).
+
+**Ablation grid (HPC):** `sbatch run_experiment_2_ablation.sh` — Dream replacement for the legacy MDLM ablation: `initial_eval`, **`grpo_lora_baseline`**, then nested **`baseline_train`** over `max_tree_nodes` × `branch_width` × `steps_per_expansion`. Same sandbox/W&B/env pattern; optional `RUN_INITIAL_EVAL=0` / `RUN_FLAT_BASELINE=0` / `RUN_MCTS_GRID=0`. Automatic EvalPlus post-runs: not wired yet.
 
 ## Reference Commands (GPU)
 

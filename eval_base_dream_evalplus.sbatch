@@ -16,6 +16,8 @@
 #   RUN_PASS10=1     also run pass@10 (n-samples=10, temp=0.4) after pass@1
 #   ADAPTER          if set, passed as --adapter to both eval scripts (trained checkpoint)
 #   EVALPLUS_BACKEND e.g. unsafe — see dream/docs/EVAL_PROTOCOL.md §6.4 (HPC often needs this)
+#   MAX_NEW_TOKENS  default 512 — diffusion length cap (CLI: --max-new-tokens)
+#   STEPS           default 32  — denoising steps (CLI: --steps); not tied to max_new_tokens
 #
 # Wall time: full pass@1 is hours on one GPU (164 + 378 tasks × diffusion). Adjust --time.
 #
@@ -49,6 +51,9 @@ elif [ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]; then
 fi
 conda activate EntropyTreeGRPO_Dream_env
 
+# Line-buffered Python so Slurm .out updates during long diffusion loops (see [eval-gen] logs).
+export PYTHONUNBUFFERED=1
+
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 export HF_HOME="${HF_HOME:-/scratch/${USER}/hf_home}"
 mkdir -p "$HF_HOME"
@@ -59,6 +64,10 @@ if [ -n "${EVALPLUS_BACKEND:-}" ]; then
 fi
 
 python -m pip install -r dream/requirements.txt -q
+
+MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-512}"
+STEPS="${STEPS:-32}"
+echo "MAX_NEW_TOKENS=$MAX_NEW_TOKENS  STEPS=$STEPS"
 
 MODEL="${MODEL:-Dream-org/Dream-v0-Instruct-7B}"
 OUT_BASE="${OUT_BASE:-/scratch/${USER}/dream_eval/base_${SLURM_JOB_ID}}"
@@ -98,8 +107,8 @@ if [ "${RUN_HUMANEVAL:-1}" = "1" ]; then
     --max-tasks 0 \
     --n-samples 1 \
     --temperature 0.2 \
-    --max-new-tokens 512 \
-    --steps 512
+    --max-new-tokens "$MAX_NEW_TOKENS" \
+    --steps "$STEPS"
   run_evalplus humaneval "$HE_P1" "${OUT_BASE}/evalplus_humaneval_pass1.log"
 else
   echo "SKIP RUN_HUMANEVAL=0"
@@ -118,8 +127,8 @@ if [ "${RUN_MBPP:-1}" = "1" ]; then
     --max-tasks 0 \
     --n-samples 1 \
     --temperature 0.2 \
-    --max-new-tokens 512 \
-    --steps 512
+    --max-new-tokens 256 \
+    --steps 256
   run_evalplus mbpp "$MB_P1" "${OUT_BASE}/evalplus_mbpp_pass1.log"
 else
   echo "SKIP RUN_MBPP=0"
@@ -139,8 +148,8 @@ if [ "${RUN_PASS10:-0}" = "1" ]; then
     --max-tasks 0 \
     --n-samples 10 \
     --temperature 0.4 \
-    --max-new-tokens 512 \
-    --steps 512
+    --max-new-tokens "$MAX_NEW_TOKENS" \
+    --steps "$STEPS"
   run_evalplus humaneval "$HE_P10" "${OUT_BASE}/evalplus_humaneval_pass10.log"
 
   echo "================================"
@@ -155,8 +164,8 @@ if [ "${RUN_PASS10:-0}" = "1" ]; then
     --max-tasks 0 \
     --n-samples 10 \
     --temperature 0.4 \
-    --max-new-tokens 512 \
-    --steps 512
+    --max-new-tokens "$MAX_NEW_TOKENS" \
+    --steps "$STEPS"
   run_evalplus mbpp "$MB_P10" "${OUT_BASE}/evalplus_mbpp_pass10.log"
 fi
 

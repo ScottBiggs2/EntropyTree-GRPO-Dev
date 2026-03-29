@@ -51,6 +51,8 @@ fi
 # skipping activate used the wrong Python (e.g. 3.13) and broke torch/torchvision pins.
 conda activate EntropyTreeGRPO_Dream_env
 
+export PYTHONUNBUFFERED=1
+
 echo "CONDA_DEFAULT_ENV=${CONDA_DEFAULT_ENV:-} CONDA_PREFIX=${CONDA_PREFIX:-}"
 echo "PYTHON=$(command -v python)"
 python -c "import sys; print(sys.executable, sys.version.split()[0])"
@@ -124,7 +126,7 @@ if [ -f "$HUMANEVAL_JSONL" ]; then
     --n-samples 1 \
     --temperature 0.2 \
     --max-new-tokens 512 \
-    --steps 512 \
+    --steps 32 \
     || on_fail "eval_humaneval"
   echo "Wrote $HE_OUT ($(wc -l < "$HE_OUT") lines)"
 else
@@ -141,7 +143,7 @@ if [ -f "$MBPP_JSONL" ]; then
     --n-samples 1 \
     --temperature 0.2 \
     --max-new-tokens 512 \
-    --steps 512 \
+    --steps 32 \
     || on_fail "eval_mbpp"
   echo "Wrote $MB_OUT ($(wc -l < "$MB_OUT") lines)"
 else
