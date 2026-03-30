@@ -43,8 +43,8 @@ def main() -> int:
     parser.add_argument(
         "--steps",
         type=int,
-        default=32,
-        help="Denoising steps for diffusion_generate (independent of max-new-tokens). Default 32.",
+        default=128,
+        help="Denoising steps for diffusion_generate (independent of max-new-tokens). Default 128 (validate_dream.py).",
     )
     parser.add_argument("--max-tasks", type=int, default=0, help="0 = all tasks")
     parser.add_argument("--device", default=None, help="cuda / cuda:0 / cpu (default: auto)")

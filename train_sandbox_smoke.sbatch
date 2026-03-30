@@ -1,6 +1,11 @@
 #!/bin/bash
 # Training validation on Explorer: **Apptainer** + `dream-sandbox.sif` + execution-shaped rewards.
-# Same Slurm / conda / pip / **W&B** pattern as `run_dream_comparison.sh` — one phase only.
+# Same Slurm / conda / pip / **W&B** pattern as `run_dream_comparison.sh` — **one phase only**
+# (default: flat `grpo_lora_baseline`, no entropy-tree MCTS).
+#
+# For **full** training (initial_eval + flat GRPO + **MCTS grid / baseline_train**), use either:
+#   sbatch train_sandbox_full.sbatch
+#   sbatch run_experiment_2_ablation.sh
 #
 # Submit from repo root:
 #   sbatch train_sandbox_smoke.sbatch
@@ -37,6 +42,8 @@
 #   Set MAX_TASKS=0 or use a larger JSONL so MAX_TASKS caps actually apply.
 #
 # --- Hyperparameters (same names as run_dream_comparison.sh where applicable) ---
+#   TOTAL_DENOISING_STEPS  default 128 — MCTSConfig.total_denoising_steps (global diffusion schedule;
+#                          same spirit as validate_dream.py diffusion_generate steps=128). Override e.g. 256.
 #   MAX_TREE_NODES BRANCH_WIDTH STEPS_PER_EXPANSION MAX_NEW_TOKENS
 #   MIN_ADAPT MAX_ADAPT BRANCH_THRESHOLD LEARNING_RATE
 #   ENTROPY_WEIGHT_MIN ENTROPY_WEIGHT_MAX NUM_BASELINE_SAMPLES REWARD_TIMEOUT
@@ -150,6 +157,7 @@ REWARD_TIMEOUT="${REWARD_TIMEOUT:-2.0}"
 MAX_TREE_NODES="${MAX_TREE_NODES:-8}"
 BRANCH_WIDTH="${BRANCH_WIDTH:-2}"
 STEPS_PER_EXPANSION="${STEPS_PER_EXPANSION:-12}"
+TOTAL_DENOISING_STEPS="${TOTAL_DENOISING_STEPS:-128}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-256}"
 MIN_ADAPT="${MIN_ADAPT:-4}"
 MAX_ADAPT="${MAX_ADAPT:-36}"
@@ -179,7 +187,7 @@ echo "USE_WANDB=$USE_WANDB  WANDB_PROJECT=$WANDB_PROJECT  WANDB_GROUP=$WANDB_GRO
 echo "SANDBOX_SIF=$SANDBOX_SIF"
 echo "DATASET=$DATASET  DATASET_SPLIT=$DATASET_SPLIT  TRAIN_PHASE=$TRAIN_PHASE"
 echo "MAX_TASKS=$MAX_TASKS  NUM_EPOCHS=$NUM_EPOCHS  REWARD=$REWARD"
-echo "MAX_TREE_NODES=$MAX_TREE_NODES  BRANCH_WIDTH=$BRANCH_WIDTH  STEPS_PER_EXPANSION=$STEPS_PER_EXPANSION  MAX_NEW_TOKENS=$MAX_NEW_TOKENS"
+echo "MAX_TREE_NODES=$MAX_TREE_NODES  BRANCH_WIDTH=$BRANCH_WIDTH  STEPS_PER_EXPANSION=$STEPS_PER_EXPANSION  TOTAL_DENOISING_STEPS=$TOTAL_DENOISING_STEPS  MAX_NEW_TOKENS=$MAX_NEW_TOKENS"
 echo "NUM_BASELINE_SAMPLES=$NUM_BASELINE_SAMPLES  TEMPERATURE=$TEMPERATURE  TRAIN_SAMPLING_TEMPERATURE=$TRAIN_SAMPLING_TEMPERATURE"
 echo "LEARNING_RATE=$LEARNING_RATE  BRANCH_THRESHOLD=$BRANCH_THRESHOLD  ENTROPY_WEIGHT_MIN=$ENTROPY_WEIGHT_MIN ENTROPY_WEIGHT_MAX=$ENTROPY_WEIGHT_MAX"
 # Approximate global train steps (epochs × prompts per epoch); actual prompts = min(MAX_TASKS, len(dataset split)).
@@ -211,6 +219,7 @@ python dream/scripts/run_dream_comparison.py \
   --max_tree_nodes "$MAX_TREE_NODES" \
   --branch_width "$BRANCH_WIDTH" \
   --steps_per_expansion "$STEPS_PER_EXPANSION" \
+  --total_denoising_steps "$TOTAL_DENOISING_STEPS" \
   --max_new_tokens "$MAX_NEW_TOKENS" \
   --min_steps_per_expansion "$MIN_ADAPT" \
   --max_steps_per_expansion "$MAX_ADAPT" \

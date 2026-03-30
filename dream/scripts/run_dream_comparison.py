@@ -229,6 +229,13 @@ def main() -> int:
     p.add_argument("--max_tree_nodes", type=int, default=8)
     p.add_argument("--branch_width", type=int, default=2)
     p.add_argument("--steps_per_expansion", type=int, default=12)
+    p.add_argument(
+        "--total_denoising_steps",
+        type=int,
+        default=128,
+        help="Global diffusion denoising schedule (MCTSConfig.total_denoising_steps). "
+        "Same role as diffusion_generate(..., steps=T); validate_dream.py uses steps=128.",
+    )
     p.add_argument("--max_new_tokens", type=int, default=96)
     p.add_argument("--min_steps_per_expansion", type=int, default=8)
     p.add_argument("--max_steps_per_expansion", type=int, default=36)
@@ -347,7 +354,7 @@ def main() -> int:
         branch_width=args.branch_width,
         steps_per_expansion=args.steps_per_expansion,
         max_new_tokens=args.max_new_tokens,
-        total_denoising_steps=max(256, args.max_new_tokens),
+        total_denoising_steps=args.total_denoising_steps,
         adaptive_stepping=adaptive,
         min_steps_per_expansion=args.min_steps_per_expansion,
         max_steps_per_expansion=args.max_steps_per_expansion,
@@ -383,6 +390,7 @@ def main() -> int:
         f"[dream_cmp] adaptive_stepping={adaptive} branch_threshold={branch_threshold} "
         f"alpha_entropy={alpha_entropy} entropy_weight_min={args.entropy_weight_min}"
     )
+    print(f"[dream_cmp] total_denoising_steps={args.total_denoising_steps} max_new_tokens={args.max_new_tokens}")
     print(
         f"[dream_cmp] reward={args.reward} workload_source={workload['source']} "
         f"dataset_split={workload['dataset_split'] or 'n/a'}"

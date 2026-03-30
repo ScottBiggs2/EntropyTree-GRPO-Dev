@@ -11,6 +11,8 @@ SPECIAL_TOKENS = (
     "<|im_start|>",
     "<|dlm_pad|>",
     "</s>",
+    # MDLM / fixed-length diffusion runs often pad with EOS-like sentinels; strip before code extract.
+    "<|endoftext|>",
 )
 
 

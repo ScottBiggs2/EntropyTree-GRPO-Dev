@@ -78,9 +78,13 @@ def extract_diffucoder_completion(generated_suffix: str) -> str:
     if not text:
         return ""
 
+    # Pad tokens can sit after a closing fence or between spans; strip again after any cut.
+    def _finalize(s: str) -> str:
+        return strip_special_tokens(s).strip("\n\r")
+
     m = re.search(r"```python\s*\n(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
     if m:
-        return m.group(1).strip("\n\r")
+        return _finalize(m.group(1))
 
     # No closing fence: strip a duplicated opening ```python line if the model echoed it
     lines = text.splitlines()
@@ -94,7 +98,7 @@ def extract_diffucoder_completion(generated_suffix: str) -> str:
         if idx != -1:
             text = text[:idx].rstrip()
 
-    return text.strip("\n\r")
+    return _finalize(text)
 
 
 def normalize_humaneval_evalplus_completion(completion: str, entry_point: str) -> str:

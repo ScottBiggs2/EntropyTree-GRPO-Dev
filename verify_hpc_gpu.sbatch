@@ -12,6 +12,7 @@
 #   MBPP_JSONL        MBPP+ JSONL (default: /scratch/$USER/dream_data/mbpp.jsonl)
 #   VERIFY_MAX_TASKS  default 2 — --max-tasks for step 5 eval smokes
 #   VERIFY_N_SAMPLES  default 1 — --n-samples for step 5 eval smokes
+#   VERIFY_DENOISING_STEPS  default 128 — --steps for eval_humaneval/eval_mbpp (align with validate_dream.py)
 #   SKIP_EVALPLUS=1   Default; smoke JSONL cannot be scored (see below)
 #   VERIFY_STRICT=1   Exit non-zero if eval dataset files or evalplus are missing/fail
 #
@@ -115,9 +116,10 @@ HUMANEVAL_JSONL="${HUMANEVAL_JSONL:-/scratch/${USER}/dream_data/humaneval.jsonl}
 MBPP_JSONL="${MBPP_JSONL:-/scratch/${USER}/dream_data/mbpp.jsonl}"
 VERIFY_MAX_TASKS="${VERIFY_MAX_TASKS:-2}"
 VERIFY_N_SAMPLES="${VERIFY_N_SAMPLES:-1}"
+VERIFY_DENOISING_STEPS="${VERIFY_DENOISING_STEPS:-128}"
 
 echo "================================"
-echo "5) DiffuCoder-aligned eval smoke (max_tasks=${VERIFY_MAX_TASKS}, n_samples=${VERIFY_N_SAMPLES})"
+echo "5) DiffuCoder-aligned eval smoke (max_tasks=${VERIFY_MAX_TASKS}, n_samples=${VERIFY_N_SAMPLES}, steps=${VERIFY_DENOISING_STEPS})"
 echo "================================"
 HE_OUT="${VERIFY_ROOT}/humaneval_smoke.jsonl"
 MB_OUT="${VERIFY_ROOT}/mbpp_smoke.jsonl"
@@ -131,7 +133,7 @@ if [ -f "$HUMANEVAL_JSONL" ]; then
     --n-samples "$VERIFY_N_SAMPLES" \
     --temperature 0.2 \
     --max-new-tokens 512 \
-    --steps 32 \
+    --steps "$VERIFY_DENOISING_STEPS" \
     || on_fail "eval_humaneval"
   echo "Wrote $HE_OUT ($(wc -l < "$HE_OUT") lines)"
 else
@@ -148,7 +150,7 @@ if [ -f "$MBPP_JSONL" ]; then
     --n-samples "$VERIFY_N_SAMPLES" \
     --temperature 0.2 \
     --max-new-tokens 512 \
-    --steps 32 \
+    --steps "$VERIFY_DENOISING_STEPS" \
     || on_fail "eval_mbpp"
   echo "Wrote $MB_OUT ($(wc -l < "$MB_OUT") lines)"
 else

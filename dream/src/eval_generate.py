@@ -73,7 +73,7 @@ def generate_completions(
     slot_from_task: Callable[[CodeTask], str],
     n_samples: int = 1,
     max_new_tokens: int = 512,
-    steps: int = 32,
+    steps: int = 128,
     temperature: float = 0.2,
     top_p: float = 0.95,
     alg: str = "entropy",

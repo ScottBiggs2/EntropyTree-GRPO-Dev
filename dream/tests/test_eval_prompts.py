@@ -73,6 +73,11 @@ def test_mbpp_prompt_matches_paper_table6_shape() -> None:
             "```python\ndef foo():\n    pass\n```",
             "def foo():\n    pass",
         ),
+        # MDLM fixed-length padding after closing fence (must not reach JSONL / EvalPlus)
+        (
+            "    return a + b\n```<|endoftext|><|endoftext|><|endoftext|>",
+            "    return a + b",
+        ),
     ],
 )
 def test_extract_diffucoder_completion(raw: str, want: str) -> None:

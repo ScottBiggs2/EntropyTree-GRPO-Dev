@@ -2,6 +2,7 @@ from dream.src.formatting import (
     build_code_task_prompt,
     extract_python_code,
     normalize_completion_for_reward,
+    strip_special_tokens,
 )
 
 
@@ -38,6 +39,12 @@ def test_normalize_completion_prefers_entry_point_definition():
     text = "```python\ndef helper():\n    pass\n\ndef foo(x):\n    return x\n```"
     code = normalize_completion_for_reward(text, entry_point="foo")
     assert code.startswith("def foo(x):")
+
+
+def test_strip_special_tokens_removes_endoftext_padding():
+    s = "pass\n```<|endoftext|><|endoftext|>"
+    assert "<|endoftext|>" not in strip_special_tokens(s)
+    assert strip_special_tokens(s).strip() == "pass\n```"
 
 
 def test_normalize_completion_keeps_body_only_when_no_definition():

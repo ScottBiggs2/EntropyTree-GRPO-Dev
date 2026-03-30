@@ -67,11 +67,12 @@ GROUP="$RUN_NAME"
 WANDB_PROJECT="${WANDB_PROJECT:-entropy-tree-grpo-dream}"
 
 # Defaults sized for ~80GB A100 + Dream 7B LoRA + MCTS (OOM on 2nd step if too large).
-# Override before sbatch: NUM_EPOCHS, ENTROPY_WEIGHT_MIN, MAX_TREE_NODES, DATASET, REWARD, etc.
+# Override before sbatch: NUM_EPOCHS, ENTROPY_WEIGHT_MIN, MAX_TREE_NODES, TOTAL_DENOISING_STEPS, DATASET, REWARD, etc.
 NUM_EPOCHS="${NUM_EPOCHS:-32}"
 MAX_TREE_NODES="${MAX_TREE_NODES:-8}"
 BRANCH_WIDTH="${BRANCH_WIDTH:-2}"
 STEPS_PER_EXPANSION="${STEPS_PER_EXPANSION:-12}"
+TOTAL_DENOISING_STEPS="${TOTAL_DENOISING_STEPS:-128}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-256}"
 MIN_ADAPT="${MIN_ADAPT:-4}"
 MAX_ADAPT="${MAX_ADAPT:-36}"
@@ -101,6 +102,7 @@ COMMON=(
   --max_tree_nodes "$MAX_TREE_NODES"
   --branch_width "$BRANCH_WIDTH"
   --steps_per_expansion "$STEPS_PER_EXPANSION"
+  --total_denoising_steps "$TOTAL_DENOISING_STEPS"
   --max_new_tokens "$MAX_NEW_TOKENS"
   --min_steps_per_expansion "$MIN_ADAPT"
   --max_steps_per_expansion "$MAX_ADAPT"
@@ -128,6 +130,7 @@ if [ "$SAVE_CHECKPOINTS" = "1" ]; then
   COMMON+=(--save-checkpoints --save_every_steps "$SAVE_EVERY")
 fi
 
+echo "Resolved diffusion: TOTAL_DENOISING_STEPS=$TOTAL_DENOISING_STEPS  (override via env before sbatch)"
 echo "================================"
 echo "1/6 initial_eval (no training; adaptive tree)"
 echo "================================"

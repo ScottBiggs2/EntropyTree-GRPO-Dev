@@ -31,13 +31,16 @@
 # --- Ablation toggles ---
 #   RUN_INITIAL_EVAL=0       skip phase 1
 #   RUN_FLAT_BASELINE=0      skip phase 2
-#   RUN_MCTS_GRID=0          skip phase 3
+#   RUN_MCTS_GRID=0          skip phase 3 (entropy-tree MCTS GRPO — the main “serious” tree training)
+#
+#   TEMPERATURE              default 0.2  (eval / completion sampling)
+#   TRAIN_SAMPLING_TEMPERATURE  default 0.6  (training rollouts + tree expansion diversity)
 #
 # --- Grid (space-separated lists; bash arrays below) ---
 #   Override by exporting before sbatch, e.g. export MAX_NODES_LIST="8 16"
 #
 # --- Hyperparameters ---
-#   NUM_EPOCHS, MAX_NEW_TOKENS, NUM_BASELINE_SAMPLES, LEARNING_RATE, REWARD_TIMEOUT,
+#   NUM_EPOCHS, MAX_NEW_TOKENS, TOTAL_DENOISING_STEPS (default 128), NUM_BASELINE_SAMPLES, LEARNING_RATE, REWARD_TIMEOUT,
 #   MIN_ADAPT, MAX_ADAPT, BRANCH_THRESHOLD, ENTROPY_WEIGHT_MIN, ENTROPY_WEIGHT_MAX,
 #   EVAL_MAX_TREE_NODES (for initial_eval only), EVAL_BRANCH_WIDTH, EVAL_STEPS_PER_EXPANSION
 #
@@ -122,6 +125,11 @@ if [ ! -f "$SANDBOX_SIF" ]; then
   echo "ERROR: Sandbox image not found: $SANDBOX_SIF"
   exit 1
 fi
+if ! command -v apptainer &>/dev/null; then
+  echo "ERROR: apptainer not on PATH"
+  exit 1
+fi
+echo "Apptainer + image sanity: $(apptainer exec "$SANDBOX_SIF" python3 --version 2>&1)"
 
 DATASET="${DATASET:-dream/data/code_grpo_train.sample.jsonl}"
 DATASET_SPLIT="${DATASET_SPLIT:-train}"
@@ -129,15 +137,18 @@ MAX_TASKS="${MAX_TASKS:-3}"
 REWARD="${REWARD:-execution_shaped}"
 REWARD_TIMEOUT="${REWARD_TIMEOUT:-2.25}"
 
-NUM_EPOCHS="${NUM_EPOCHS:-20}"
-MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-256}"
-NUM_BASELINE_SAMPLES="${NUM_BASELINE_SAMPLES:-6}"
+NUM_EPOCHS="${NUM_EPOCHS:-32}"
+MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-512}"
+TOTAL_DENOISING_STEPS="${TOTAL_DENOISING_STEPS:-128}"
+NUM_BASELINE_SAMPLES="${NUM_BASELINE_SAMPLES:-16}"
 LEARNING_RATE="${LEARNING_RATE:-1e-6}"
 MIN_ADAPT="${MIN_ADAPT:-4}"
 MAX_ADAPT="${MAX_ADAPT:-36}"
 BRANCH_THRESHOLD="${BRANCH_THRESHOLD:-0.65}"
 ENTROPY_WEIGHT_MIN="${ENTROPY_WEIGHT_MIN:-0.08}"
 ENTROPY_WEIGHT_MAX="${ENTROPY_WEIGHT_MAX:-2.5}"
+TEMPERATURE="${TEMPERATURE:-0.2}"
+TRAIN_SAMPLING_TEMPERATURE="${TRAIN_SAMPLING_TEMPERATURE:-0.6}"
 
 CHECKPOINT_DIR="${CHECKPOINT_DIR:-/scratch/${USER}/entropy_tree_grpo_dream}"
 SAVE_EVERY="${SAVE_EVERY:-0}"
@@ -181,9 +192,10 @@ echo "Resolved config"
 echo "================================"
 echo "AB_PREFIX=$AB_PREFIX  WANDB_GROUP=$WANDB_GROUP  USE_WANDB=$USE_WANDB"
 echo "DATASET=$DATASET  split=$DATASET_SPLIT  MAX_TASKS=$MAX_TASKS  REWARD=$REWARD"
-echo "NUM_EPOCHS=$NUM_EPOCHS  MAX_NEW_TOKENS=$MAX_NEW_TOKENS  LR=$LEARNING_RATE"
+echo "NUM_EPOCHS=$NUM_EPOCHS  MAX_NEW_TOKENS=$MAX_NEW_TOKENS  TOTAL_DENOISING_STEPS=$TOTAL_DENOISING_STEPS  LR=$LEARNING_RATE"
 echo "Grid: nodes=${MAX_NODES_ARRAY[*]}  branch=${BRANCH_ARRAY[*]}  steps=${STEPS_ARRAY[*]}"
 echo "RUN_INITIAL_EVAL=$RUN_INITIAL_EVAL  RUN_FLAT_BASELINE=$RUN_FLAT_BASELINE  RUN_MCTS_GRID=$RUN_MCTS_GRID"
+echo "TEMPERATURE=$TEMPERATURE  TRAIN_SAMPLING_TEMPERATURE=$TRAIN_SAMPLING_TEMPERATURE"
 
 # Shared args for every invocation (run_name and phase set per call)
 base_cmd() {
@@ -200,6 +212,7 @@ base_cmd() {
     --sandbox-image "$SANDBOX_SIF" \
     --lora \
     --max_new_tokens "$MAX_NEW_TOKENS" \
+    --total_denoising_steps "$TOTAL_DENOISING_STEPS" \
     --min_steps_per_expansion "$MIN_ADAPT" \
     --max_steps_per_expansion "$MAX_ADAPT" \
     --branch_threshold "$BRANCH_THRESHOLD" \
@@ -207,6 +220,8 @@ base_cmd() {
     --entropy-weight-min "$ENTROPY_WEIGHT_MIN" \
     --entropy-weight-max "$ENTROPY_WEIGHT_MAX" \
     --num-baseline-samples "$NUM_BASELINE_SAMPLES" \
+    --temperature "$TEMPERATURE" \
+    --train-sampling-temperature "$TRAIN_SAMPLING_TEMPERATURE" \
     --checkpoint-dir "$CHECKPOINT_DIR" \
     "${CKPT_ARGS[@]}" \
     "$@"

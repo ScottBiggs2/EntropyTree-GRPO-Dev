@@ -18,7 +18,7 @@
 #   ADAPTER          if set, passed as --adapter to both eval scripts (trained checkpoint)
 #   EVALPLUS_BACKEND e.g. unsafe — see dream/docs/EVAL_PROTOCOL.md §6.4 (HPC often needs this)
 #   MAX_NEW_TOKENS  default 512 — diffusion length cap (CLI: --max-new-tokens)
-#   STEPS           default 32  — denoising steps (CLI: --steps); not tied to max_new_tokens
+#   STEPS           default 128 — denoising steps (CLI: --steps); align with validate_dream.py; not tied to max_new_tokens
 #   MAX_TASKS       default 0 — cap tasks per benchmark (0 = all). Quick test: MAX_TASKS=8 sbatch ...
 #   N_SAMPLES       default 1 — samples per task for pass@1 sections (temperature 0.2)
 #   N_SAMPLES_PASS10 default 10 — samples per task when RUN_PASS10=1 (temperature 0.4)
@@ -71,7 +71,7 @@ fi
 python -m pip install -r dream/requirements.txt -q
 
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-512}"
-STEPS="${STEPS:-32}"
+STEPS="${STEPS:-128}"
 MAX_TASKS="${MAX_TASKS:-0}"
 N_SAMPLES="${N_SAMPLES:-1}"
 N_SAMPLES_PASS10="${N_SAMPLES_PASS10:-10}"
