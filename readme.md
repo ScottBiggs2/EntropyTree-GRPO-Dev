@@ -147,3 +147,9 @@ cd /path/to/EntropyTree-GRPO
 python -m pip install -r requirements.txt
 PYTHONPATH=. python -m pytest tests/ -v
 ```
+
+# Handy:
+
+```bash
+sbatch --export=ALL,EVALPLUS_BACKEND=unsafe eval_base_dream_evalplus.sbatch
+```

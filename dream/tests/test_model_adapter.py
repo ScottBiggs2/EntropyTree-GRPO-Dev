@@ -76,6 +76,18 @@ class _MockDreamModel(nn.Module):
         raise RuntimeError("not used in sampling tests")
 
 
+def test_transfer_count_dream_step_at_or_past_horizon_no_crash():
+    """global_step can reach total_T during long adaptive runs; must not index OOB."""
+    model = _MockDreamModel(vocab_size=1024)
+    tok = _MockTokenizer(mask_token_id=99, vocab_size=1024)
+    adapter = ModelAdapter(model, tok, model_type="dream")
+    total = 128
+    k = adapter.transfer_count(n_masked=50, step=total, total_steps=total)
+    assert k >= 1
+    k2 = adapter.transfer_count(n_masked=50, step=999, total_steps=total)
+    assert k2 >= 1
+
+
 def test_dream_sample_bf16_top_p_no_crash():
     """Regression: bf16 logits + top_p used to yield all-zero probs / Categorical error."""
     model = _MockDreamModel(vocab_size=4096)

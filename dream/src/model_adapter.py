@@ -74,9 +74,13 @@ class ModelAdapter:
         """Number of tokens to unmask at this step."""
         if self.model_type == "dream":
             # Dream's linear timestep schedule from 1 → eps.
+            # timesteps has length total_steps+1 (indices 0..total_steps); need step+1 in range.
+            if total_steps <= 0:
+                return max(1, n_masked)
             timesteps = torch.linspace(1, eps, total_steps + 1)
-            t = timesteps[step].item()
-            s = timesteps[step + 1].item()
+            step_clamped = min(max(step, 0), total_steps - 1)
+            t = timesteps[step_clamped].item()
+            s = timesteps[step_clamped + 1].item()
             return max(1, int(n_masked * (1 - s / t)))
 
         # MDLM uniform schedule over remaining steps.
