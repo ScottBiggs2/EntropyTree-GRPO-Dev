@@ -1,27 +1,43 @@
-======== dream training smoke: Apptainer sandbox + execution_shaped ========
-Started: 2026-03-28T16:21:08-04:00
-Job ID: 5504342  Host: d1028
-SANDBOX_SIF=/scratch/biggs.s/containers/dream-sandbox.sif
-DATASET=dream/data/code_grpo_train.sample.jsonl  split=train  phase=grpo_lora_baseline  max_tasks=3  epochs=1
+======== dream eval: base model + DiffuCoder-aligned prompts + EvalPlus ========
+Started: 2026-03-28T21:02:12-04:00
+Job ID: 5508267  Host: d1029
+EVALPLUS_BACKEND=unsafe
+MAX_NEW_TOKENS=512  STEPS=32  MAX_TASKS=8  N_SAMPLES=1  N_SAMPLES_PASS10=10
 ================================
-Apptainer smoke (optional): exec python --version inside image
+HumanEval+  pass@1  (n=1, temp=0.2)
 ================================
-Python 3.11.15
-================================
-run_dream_comparison.py --phase grpo_lora_baseline
-================================
-[dream_cmp] phase=grpo_lora_baseline train=True epochs=1 prompts=3 num_baseline_samples=4
-[dream_cmp] adaptive_stepping=False branch_threshold=0.65 alpha_entropy=0.5 entropy_weight_min=0.08
-[dream_cmp] reward=execution_shaped workload_source=dataset dataset_split=train
-[dream_cmp] checkpoints: disabled (default; no .pt files)
-[LoRA] trainable params: 20,185,088 / 7,635,801,600 (0.2643%)
-[dream-baseline-grpo diag] prompt='Complete the following Python function s' rewards=[0.04, 0.04, 0.04, 0.09] best_completion='```python\\ndef fibonacci(n):\\n    return n     1     1  1 1   1           '
-[dream_cmp] epoch=0 step=1 avg_entropy=0.0000 avg_reward=0.0525 epoch=0.0000 loss=0.0010 lr=0.0000 max_reward=0.0900 mean_reward=0.0525 min_reward=0.0400 n_loss_forwards=8.0000 n_transitions=8.0000 prompt_idx=0.0000 tree_leaves=4.0000 tree_nodes=0.0000 wall_sec=4.36
-[dream-baseline-grpo diag] prompt='Complete the following Python function s' rewards=[0.11, 0.11, 0.11, 0.11] best_completion='```python\\ndef factorial(n):\\n    if n == 0:\\n        return 1\\n    else:\\n        return n(n(n(n1)\\n'
-[dream_cmp] epoch=0 step=2 avg_entropy=0.0000 avg_reward=0.1100 epoch=0.0000 loss=-0.0000 lr=0.0000 max_reward=0.1100 mean_reward=0.1100 min_reward=0.1100 n_loss_forwards=8.0000 n_transitions=8.0000 prompt_idx=1.0000 tree_leaves=4.0000 tree_nodes=0.0000 wall_sec=3.54
-[dream-baseline-grpo diag] prompt='Complete the following Python function s' rewards=[0.14, 0.14, 0.14, 0.14] best_completion='```python\\ndef sum_list(lst):\\n    return sum(lst)\\n```'
-[dream_cmp] epoch=0 step=3 avg_entropy=0.0000 avg_reward=0.1400 epoch=0.0000 loss=-0.0000 lr=0.0000 max_reward=0.1400 mean_reward=0.1400 min_reward=0.1400 n_loss_forwards=8.0000 n_transitions=8.0000 prompt_idx=2.0000 tree_leaves=4.0000 tree_nodes=0.0000 wall_sec=3.51
-[dream_cmp] epoch 0 mean metrics: {'loss': 0.0003209809462229411, 'avg_reward': 0.10083333333333334, 'mean_reward': 0.10083333333333334, 'min_reward': 0.09666666666666668, 'max_reward': 0.11333333333333334, 'tree_nodes': 0.0, 'tree_leaves': 4.0, 'avg_entropy': 0.0, 'lr': 2.625e-06, 'n_transitions': 8.0, 'n_loss_forwards': 8.0, 'wall_sec_epoch': 11.813614880666137}
-================================
-Finished OK: 2026-03-28T16:22:55-04:00
-================================
+Loading model 'Dream-org/Dream-v0-Instruct-7B'...
+[eval-gen] 1/8 task_id=HumanEval/0 wall_s=3.6 completion_chars=5960
+[eval-gen] 2/8 task_id=HumanEval/1 wall_s=2.2 completion_chars=6129
+[eval-gen] 3/8 task_id=HumanEval/2 wall_s=1.9 completion_chars=6325
+[eval-gen] 4/8 task_id=HumanEval/3 wall_s=2.2 completion_chars=4029
+[eval-gen] 5/8 task_id=HumanEval/4 wall_s=2.2 completion_chars=6227
+[eval-gen] 6/8 task_id=HumanEval/5 wall_s=1.9 completion_chars=5659
+[eval-gen] 7/8 task_id=HumanEval/6 wall_s=2.2 completion_chars=5358
+[eval-gen] 8/8 task_id=HumanEval/7 wall_s=1.9 completion_chars=6388
+Wrote 8 lines to /scratch/biggs.s/dream_eval/base_5508267/humaneval_pass1.jsonl
+Load from ground-truth from /home/biggs.s/.cache/evalplus/fe585eb4df8c88d844eeb463ea4d0302.pkl
+Reading samples...
+
+0it [00:00, ?it/s]
+1it [00:00,  1.78it/s]
+8it [00:00, 14.26it/s]
+Traceback (most recent call last):
+  File "/home/biggs.s/miniconda/envs/EntropyTreeGRPO_Dream_env/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/home/biggs.s/miniconda/envs/EntropyTreeGRPO_Dream_env/lib/python3.10/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "/home/biggs.s/miniconda/envs/EntropyTreeGRPO_Dream_env/lib/python3.10/site-packages/evalplus/evaluate.py", line 363, in <module>
+    main()
+  File "/home/biggs.s/miniconda/envs/EntropyTreeGRPO_Dream_env/lib/python3.10/site-packages/evalplus/evaluate.py", line 359, in main
+    Fire(evaluate)
+  File "/home/biggs.s/miniconda/envs/EntropyTreeGRPO_Dream_env/lib/python3.10/site-packages/fire/core.py", line 135, in Fire
+    component_trace = _Fire(component, args, parsed_flag_args, context, name)
+  File "/home/biggs.s/miniconda/envs/EntropyTreeGRPO_Dream_env/lib/python3.10/site-packages/fire/core.py", line 468, in _Fire
+    component, remaining_args = _CallAndUpdateTrace(
+  File "/home/biggs.s/miniconda/envs/EntropyTreeGRPO_Dream_env/lib/python3.10/site-packages/fire/core.py", line 684, in _CallAndUpdateTrace
+    component = fn(*varargs, **kwargs)
+  File "/home/biggs.s/miniconda/envs/EntropyTreeGRPO_Dream_env/lib/python3.10/site-packages/evalplus/evaluate.py", line 230, in evaluate
+    assert len(completion_id) == len(problems), "Missing problems in samples"
+AssertionError: Missing problems in samples
+ERROR: evalplus.evaluate failed (rc=1) dataset=humaneval — check EVALPLUS_BACKEND / logs

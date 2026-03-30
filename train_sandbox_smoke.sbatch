@@ -22,13 +22,19 @@
 #   SANDBOX_SIF         default /scratch/$USER/containers/dream-sandbox.sif
 #   DATASET             default dream/data/code_grpo_train.sample.jsonl
 #   DATASET_SPLIT       default train
-#   MAX_TASKS           default 3
-#   NUM_EPOCHS          default 1
+#   MAX_TASKS           default 10  (raise for AceCode; 0 = all tasks in file)
+#   NUM_EPOCHS          default 20  (stress: many optimizer steps; was 1 = not a load test)
 #   TRAIN_PHASE         default grpo_lora_baseline  (flat GRPO + LoRA). Others: baseline_train, initial_eval, adaptive_default, ...
 #   REWARD              default execution_shaped
 #   SAVE_CHECKPOINTS=1  write under CHECKPOINT_DIR
 #   CHECKPOINT_DIR      default /scratch/$USER/entropy_tree_grpo_dream
 #   SAVE_EVERY            periodic step saves (0 = final only)
+#
+# Stress / step budget (flat GRPO default phase):
+#   optimizer_steps ≈ NUM_EPOCHS * min(MAX_TASKS, n_tasks_in_dataset)
+#   per step: K=NUM_BASELINE_SAMPLES rollouts × (many no-grad forwards + 1 backward over LoRA)
+#   Example defaults: 20 × 10 = 200 global steps on sample JSONL (3 tasks) → min(10,3)=3 → 60 steps.
+#   Set MAX_TASKS=0 or use a larger JSONL so MAX_TASKS caps actually apply.
 #
 # --- Hyperparameters (same names as run_dream_comparison.sh where applicable) ---
 #   MAX_TREE_NODES BRANCH_WIDTH STEPS_PER_EXPANSION MAX_NEW_TOKENS
@@ -44,8 +50,8 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:a100:1
-#SBATCH --mem=64G
-#SBATCH --time=4:00:00
+#SBATCH --mem=128G
+#SBATCH --time=8:00:00
 
 set -euo pipefail
 
@@ -134,8 +140,8 @@ fi
 # --- Data & phase (same env names as run_dream_comparison.sh where possible) ---
 DATASET="${DATASET:-dream/data/code_grpo_train.sample.jsonl}"
 DATASET_SPLIT="${DATASET_SPLIT:-train}"
-MAX_TASKS="${MAX_TASKS:-3}"
-NUM_EPOCHS="${NUM_EPOCHS:-1}"
+MAX_TASKS="${MAX_TASKS:-10}"
+NUM_EPOCHS="${NUM_EPOCHS:-20}"
 TRAIN_PHASE="${TRAIN_PHASE:-grpo_lora_baseline}"
 REWARD="${REWARD:-execution_shaped}"
 REWARD_TIMEOUT="${REWARD_TIMEOUT:-2.0}"
@@ -144,14 +150,16 @@ REWARD_TIMEOUT="${REWARD_TIMEOUT:-2.0}"
 MAX_TREE_NODES="${MAX_TREE_NODES:-8}"
 BRANCH_WIDTH="${BRANCH_WIDTH:-2}"
 STEPS_PER_EXPANSION="${STEPS_PER_EXPANSION:-12}"
-MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-96}"
+MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-256}"
 MIN_ADAPT="${MIN_ADAPT:-4}"
 MAX_ADAPT="${MAX_ADAPT:-36}"
 BRANCH_THRESHOLD="${BRANCH_THRESHOLD:-0.65}"
 LEARNING_RATE="${LEARNING_RATE:-5e-6}"
 ENTROPY_WEIGHT_MIN="${ENTROPY_WEIGHT_MIN:-0.08}"
 ENTROPY_WEIGHT_MAX="${ENTROPY_WEIGHT_MAX:-2.5}"
-NUM_BASELINE_SAMPLES="${NUM_BASELINE_SAMPLES:-4}"
+NUM_BASELINE_SAMPLES="${NUM_BASELINE_SAMPLES:-6}"
+TEMPERATURE="${TEMPERATURE:-0.2}"
+TRAIN_SAMPLING_TEMPERATURE="${TRAIN_SAMPLING_TEMPERATURE:-0.6}"
 
 CHECKPOINT_DIR="${CHECKPOINT_DIR:-/scratch/${USER}/entropy_tree_grpo_dream}"
 SAVE_EVERY="${SAVE_EVERY:-0}"
@@ -172,7 +180,10 @@ echo "SANDBOX_SIF=$SANDBOX_SIF"
 echo "DATASET=$DATASET  DATASET_SPLIT=$DATASET_SPLIT  TRAIN_PHASE=$TRAIN_PHASE"
 echo "MAX_TASKS=$MAX_TASKS  NUM_EPOCHS=$NUM_EPOCHS  REWARD=$REWARD"
 echo "MAX_TREE_NODES=$MAX_TREE_NODES  BRANCH_WIDTH=$BRANCH_WIDTH  STEPS_PER_EXPANSION=$STEPS_PER_EXPANSION  MAX_NEW_TOKENS=$MAX_NEW_TOKENS"
+echo "NUM_BASELINE_SAMPLES=$NUM_BASELINE_SAMPLES  TEMPERATURE=$TEMPERATURE  TRAIN_SAMPLING_TEMPERATURE=$TRAIN_SAMPLING_TEMPERATURE"
 echo "LEARNING_RATE=$LEARNING_RATE  BRANCH_THRESHOLD=$BRANCH_THRESHOLD  ENTROPY_WEIGHT_MIN=$ENTROPY_WEIGHT_MIN ENTROPY_WEIGHT_MAX=$ENTROPY_WEIGHT_MAX"
+# Approximate global train steps (epochs × prompts per epoch); actual prompts = min(MAX_TASKS, len(dataset split)).
+echo "NOTE: global train steps ≈ NUM_EPOCHS × prompts_per_epoch (see [dream_cmp] line in log)."
 
 echo "================================"
 echo "Apptainer: python3 --version inside image"
@@ -208,6 +219,8 @@ python dream/scripts/run_dream_comparison.py \
   --entropy-weight-min "$ENTROPY_WEIGHT_MIN" \
   --entropy-weight-max "$ENTROPY_WEIGHT_MAX" \
   --num-baseline-samples "$NUM_BASELINE_SAMPLES" \
+  --temperature "$TEMPERATURE" \
+  --train-sampling-temperature "$TRAIN_SAMPLING_TEMPERATURE" \
   --checkpoint-dir "$CHECKPOINT_DIR" \
   "${CKPT_ARGS[@]}"
 

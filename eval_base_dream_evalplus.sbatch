@@ -22,6 +22,7 @@
 #   MAX_TASKS       default 0 — cap tasks per benchmark (0 = all). Quick test: MAX_TASKS=8 sbatch ...
 #   N_SAMPLES       default 1 — samples per task for pass@1 sections (temperature 0.2)
 #   N_SAMPLES_PASS10 default 10 — samples per task when RUN_PASS10=1 (temperature 0.4)
+#   RUN_EVALPLUS    default 1 if MAX_TASKS=0, else 0. EvalPlus needs every task id in JSONL; partial runs cannot score.
 #
 # Wall time: full pass@1 is hours on one GPU (164 + 378 tasks × diffusion). Adjust --time.
 #
@@ -74,7 +75,15 @@ STEPS="${STEPS:-32}"
 MAX_TASKS="${MAX_TASKS:-0}"
 N_SAMPLES="${N_SAMPLES:-1}"
 N_SAMPLES_PASS10="${N_SAMPLES_PASS10:-10}"
-echo "MAX_NEW_TOKENS=$MAX_NEW_TOKENS  STEPS=$STEPS  MAX_TASKS=$MAX_TASKS  N_SAMPLES=$N_SAMPLES  N_SAMPLES_PASS10=$N_SAMPLES_PASS10"
+if [ "$MAX_TASKS" = "0" ]; then
+  RUN_EVALPLUS="${RUN_EVALPLUS:-1}"
+else
+  RUN_EVALPLUS="${RUN_EVALPLUS:-0}"
+fi
+echo "MAX_NEW_TOKENS=$MAX_NEW_TOKENS  STEPS=$STEPS  MAX_TASKS=$MAX_TASKS  N_SAMPLES=$N_SAMPLES  N_SAMPLES_PASS10=$N_SAMPLES_PASS10  RUN_EVALPLUS=$RUN_EVALPLUS"
+if [ "$MAX_TASKS" != "0" ] && [ "$RUN_EVALPLUS" = "1" ]; then
+  echo "WARN: RUN_EVALPLUS=1 with MAX_TASKS=$MAX_TASKS — evalplus.evaluate usually fails (subset JSONL)."
+fi
 
 MODEL="${MODEL:-Dream-org/Dream-v0-Instruct-7B}"
 OUT_BASE="${OUT_BASE:-/scratch/${USER}/dream_eval/base_${SLURM_JOB_ID}}"
@@ -116,7 +125,11 @@ if [ "${RUN_HUMANEVAL:-1}" = "1" ]; then
     --temperature 0.2 \
     --max-new-tokens "$MAX_NEW_TOKENS" \
     --steps "$STEPS"
-  run_evalplus humaneval "$HE_P1" "${OUT_BASE}/evalplus_humaneval_pass1.log"
+  if [ "$RUN_EVALPLUS" = "1" ]; then
+    run_evalplus humaneval "$HE_P1" "${OUT_BASE}/evalplus_humaneval_pass1.log"
+  else
+    echo "SKIP EvalPlus (humaneval pass@1): set MAX_TASKS=0 for full JSONL + scoring, or RUN_EVALPLUS=1 to force attempt"
+  fi
 else
   echo "SKIP RUN_HUMANEVAL=0"
 fi
@@ -136,7 +149,11 @@ if [ "${RUN_MBPP:-1}" = "1" ]; then
     --temperature 0.2 \
     --max-new-tokens "$MAX_NEW_TOKENS" \
     --steps "$STEPS"
-  run_evalplus mbpp "$MB_P1" "${OUT_BASE}/evalplus_mbpp_pass1.log"
+  if [ "$RUN_EVALPLUS" = "1" ]; then
+    run_evalplus mbpp "$MB_P1" "${OUT_BASE}/evalplus_mbpp_pass1.log"
+  else
+    echo "SKIP EvalPlus (mbpp pass@1): set MAX_TASKS=0 for full JSONL + scoring, or RUN_EVALPLUS=1 to force attempt"
+  fi
 else
   echo "SKIP RUN_MBPP=0"
 fi
@@ -157,7 +174,11 @@ if [ "${RUN_PASS10:-0}" = "1" ]; then
     --temperature 0.4 \
     --max-new-tokens "$MAX_NEW_TOKENS" \
     --steps "$STEPS"
-  run_evalplus humaneval "$HE_P10" "${OUT_BASE}/evalplus_humaneval_pass10.log"
+  if [ "$RUN_EVALPLUS" = "1" ]; then
+    run_evalplus humaneval "$HE_P10" "${OUT_BASE}/evalplus_humaneval_pass10.log"
+  else
+    echo "SKIP EvalPlus (humaneval pass@10): set MAX_TASKS=0 for full JSONL + scoring, or RUN_EVALPLUS=1 to force attempt"
+  fi
 
   echo "================================"
   echo "MBPP+  pass@10  (n=${N_SAMPLES_PASS10}, temp=0.4)"
@@ -173,7 +194,11 @@ if [ "${RUN_PASS10:-0}" = "1" ]; then
     --temperature 0.4 \
     --max-new-tokens "$MAX_NEW_TOKENS" \
     --steps "$STEPS"
-  run_evalplus mbpp "$MB_P10" "${OUT_BASE}/evalplus_mbpp_pass10.log"
+  if [ "$RUN_EVALPLUS" = "1" ]; then
+    run_evalplus mbpp "$MB_P10" "${OUT_BASE}/evalplus_mbpp_pass10.log"
+  else
+    echo "SKIP EvalPlus (mbpp pass@10): set MAX_TASKS=0 for full JSONL + scoring, or RUN_EVALPLUS=1 to force attempt"
+  fi
 fi
 
 echo "================================"

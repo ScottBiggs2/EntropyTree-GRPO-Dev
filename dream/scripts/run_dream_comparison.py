@@ -233,6 +233,21 @@ def main() -> int:
     p.add_argument("--min_steps_per_expansion", type=int, default=8)
     p.add_argument("--max_steps_per_expansion", type=int, default=36)
     p.add_argument("--branch_threshold", type=float, default=0.65)
+    p.add_argument(
+        "--temperature",
+        type=float,
+        default=0.2,
+        help="Sampling temperature for eval / tree completion (default 0.2).",
+    )
+    p.add_argument(
+        "--train-sampling-temperature",
+        type=float,
+        default=0.6,
+        dest="train_sampling_temperature",
+        help="Training-time generation temperature for flat GRPO and tree expansion "
+        "(default 0.6; higher ⇒ more diversity across K samples / siblings). "
+        "Set to 0 to fall back to --temperature.",
+    )
     p.add_argument("--lora", action="store_true", help="PEFT LoRA (recommended on ~32GB)")
     p.add_argument("--lora-r", type=int, default=8)
     p.add_argument("--lora-alpha", type=int, default=16)
@@ -341,6 +356,8 @@ def main() -> int:
         entropy_weight_min=args.entropy_weight_min,
         entropy_weight_max=args.entropy_weight_max,
         learning_rate=args.learning_rate,
+        temperature=args.temperature,
+        train_sampling_temperature=args.train_sampling_temperature,
         use_lora=use_lora,
         lora_r=args.lora_r,
         lora_alpha=args.lora_alpha,
