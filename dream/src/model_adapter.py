@@ -1,6 +1,6 @@
 """ModelAdapter abstraction for MDLM vs Dream APIs."""
 
-from typing import Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -29,6 +29,7 @@ class ModelAdapter:
             or len(tokenizer)
         )
         self.device = next(model.parameters()).device
+        self._sampling_diag: Dict[str, Any] = {}
 
     # ---- Forward / logits ----
 
@@ -67,6 +68,15 @@ class ModelAdapter:
         if self.model_type == "dream":
             return self._dream_sample(logits, mask_positions, temperature, top_p)
         return self._mdlm_sample(logits, mask_positions, temperature)
+
+    def get_and_clear_sampling_diag(self) -> Dict[str, float]:
+        """Return last sampling diagnostics (best-effort) and clear them."""
+        out: Dict[str, float] = {}
+        for k, v in list(self._sampling_diag.items()):
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                out[k] = float(v)
+        self._sampling_diag = {}
+        return out
 
     def transfer_count(
         self, n_masked: int, step: int, total_steps: int, eps: float = 1e-3
@@ -116,10 +126,17 @@ class ModelAdapter:
         conf = torch.full((L,), -1e9, dtype=logits.dtype, device=logits.device)
 
         if not mask_positions.any():
+            self._sampling_diag = {
+                "sample_temperature": float(temperature),
+                "sample_top_p": float(top_p),
+                "sample_masked_positions": 0.0,
+                "sample_used_argmax": 0.0,
+            }
             return x0, conf
 
         idx = mask_positions.nonzero(as_tuple=False).squeeze(-1)  # [M]
         logits_m = logits.index_select(0, idx)  # [M, V]
+        M = int(idx.numel())
 
         if temperature > 0:
             logits_t = logits_m / temperature
@@ -135,12 +152,35 @@ class ModelAdapter:
                 # Same fallback as Dream `generation_utils.sample_tokens`.
                 conf_m, x0_m = probs.max(dim=-1)
             conf_m = conf_m.to(logits.dtype)
+            used_argmax = 0.0
         else:
             x0_m = torch.argmax(logits_m, dim=-1)
             probs = F.softmax(logits_m.float(), dim=-1)
             conf_m = torch.gather(probs, -1, x0_m.unsqueeze(-1)).squeeze(-1).to(
                 logits.dtype
             )
+            used_argmax = 1.0
+
+        # Best-effort sampling diagnostics for debugging diversity collapse.
+        # These are intentionally lightweight and should not change behavior.
+        try:
+            probs_dbg = F.softmax(logits_m.float(), dim=-1)
+            maxp = probs_dbg.max(dim=-1).values
+            self._sampling_diag = {
+                "sample_temperature": float(temperature),
+                "sample_top_p": float(top_p),
+                "sample_masked_positions": float(M),
+                "sample_used_argmax": float(used_argmax),
+                "sample_mean_max_prob": float(maxp.mean().item()) if M > 0 else 0.0,
+                "sample_p99_max_prob": float(torch.quantile(maxp, 0.99).item()) if M > 0 else 0.0,
+            }
+        except Exception:
+            self._sampling_diag = {
+                "sample_temperature": float(temperature),
+                "sample_top_p": float(top_p),
+                "sample_masked_positions": float(M),
+                "sample_used_argmax": float(used_argmax),
+            }
 
         x0[idx] = x0_m
         conf[idx] = conf_m

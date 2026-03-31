@@ -208,6 +208,14 @@ def main() -> int:
         help="Reward function to use. Execution rewards require prompts that exist in the dataset/registry.",
     )
     p.add_argument(
+        "--reward-tie-breaker",
+        type=str,
+        default="none",
+        choices=("none", "ast_size", "code_len"),
+        dest="reward_tie_breaker",
+        help="Optional tiny continuous bonus to reduce reward ties (default: none).",
+    )
+    p.add_argument(
         "--reward-timeout",
         type=float,
         default=2.0,
@@ -304,6 +312,23 @@ def main() -> int:
         action="store_true",
         help="Log metrics as phase/key (separate charts per arm). Default: flat keys like run_experiment_2.py for easy multi-run compare.",
     )
+    p.add_argument(
+        "--trace-every-steps",
+        type=int,
+        default=0,
+        dest="trace_every_steps",
+        help="If >0, write a JSON tree trace every N steps for tree phases (baseline_train/initial_eval/adaptive_*).",
+    )
+    p.add_argument(
+        "--trace-dir",
+        type=str,
+        default="traces",
+        dest="trace_dir",
+        help="Directory (relative to repo root) to write trace JSON files.",
+    )
+    p.add_argument("--trace-max-nodes", type=int, default=0, dest="trace_max_nodes")
+    p.add_argument("--trace-max-leaves", type=int, default=0, dest="trace_max_leaves")
+    p.add_argument("--trace-decode-chars", type=int, default=240, dest="trace_decode_chars")
     args = p.parse_args()
     dataset_path = args.dataset or ""
     if args.reward in ("execution", "execution_shaped", "execution_lite") and not dataset_path:
@@ -373,6 +398,11 @@ def main() -> int:
         run_name=args.run_name,
         checkpoint_dir=args.checkpoint_dir,
         num_baseline_samples=args.num_baseline_samples,
+        trace_every_steps=args.trace_every_steps,
+        trace_dir=args.trace_dir,
+        trace_max_nodes=args.trace_max_nodes,
+        trace_max_leaves=args.trace_max_leaves,
+        trace_decode_chars=args.trace_decode_chars,
     )
 
     train = args.phase != "initial_eval"
@@ -485,6 +515,7 @@ def main() -> int:
             timeout=args.reward_timeout,
             project_root=_repo_root,
             backend=backend,
+            tie_breaker=args.reward_tie_breaker,
         )
         optimizer = torch.optim.AdamW(
             (p for p in model.parameters() if p.requires_grad),
@@ -531,9 +562,21 @@ def main() -> int:
             for pi, prompt in enumerate(prompts):
                 t_step0 = time.perf_counter()
                 if train:
-                    metrics = trainer.train_step(prompt)
+                    metrics = trainer.train_step(
+                        prompt,
+                        step_id=global_step,
+                        epoch=epoch,
+                        prompt_idx=pi,
+                        phase=args.phase,
+                    )
                 else:
-                    metrics = trainer.eval_step(prompt)
+                    metrics = trainer.eval_step(
+                        prompt,
+                        step_id=global_step,
+                        epoch=epoch,
+                        prompt_idx=pi,
+                        phase=args.phase,
+                    )
                 metrics["epoch"] = float(epoch)
                 metrics["prompt_idx"] = float(pi)
                 step_wall = time.perf_counter() - t_step0

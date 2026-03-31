@@ -124,5 +124,10 @@ python dream/scripts/run_dream_comparison.py \
   --entropy-weight-max "$ENTROPY_WEIGHT_MAX" \
   --num-baseline-samples "$NUM_BASELINE_SAMPLES" \
   --temperature "$TEMPERATURE" \
-  --train-sampling-temperature "$TRAIN_SAMPLING_TEMPERATURE"
+  --train-sampling-temperature "$TRAIN_SAMPLING_TEMPERATURE" \
+  --trace-every-steps "${TRACE_EVERY_STEPS:-100}" \
+  --trace-dir "${TRACE_DIR:-traces}" \
+  --trace-max-nodes "${TRACE_MAX_NODES:-200}" \
+  --trace-max-leaves "${TRACE_MAX_LEAVES:-16}" \
+  --trace-decode-chars "${TRACE_DECODE_CHARS:-240}"
 

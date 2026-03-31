@@ -98,6 +98,14 @@ class MCTSConfig:
     wandb_project: str = "entropy-tree-grpo-dream"
     save_every_steps: Optional[int] = None
 
+    # --- Trace artifacts (paper/debug) ---
+    # If > 0, write a JSON trace every N trainer steps for tree phases.
+    trace_every_steps: int = 0
+    trace_dir: str = "traces"
+    trace_max_nodes: int = 0
+    trace_max_leaves: int = 0
+    trace_decode_chars: int = 240
+
     def __post_init__(self) -> None:
         if self.device is None:
             # Local import to avoid circular dependency when packaging.

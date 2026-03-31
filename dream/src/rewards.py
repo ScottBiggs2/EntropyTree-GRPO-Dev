@@ -169,6 +169,23 @@ class ExecutionShapedReward(ExecutionReward):
 
     TESTS_WEIGHT = 0.80
 
+    def __init__(
+        self,
+        registry_path: Optional[str] = None,
+        timeout: float = 2.0,
+        project_root: Optional[Path] = None,
+        backend: Optional[ExecutionBackend] = None,
+        *,
+        tie_breaker: str = "none",
+    ):
+        super().__init__(
+            registry_path=registry_path,
+            timeout=timeout,
+            project_root=project_root,
+            backend=backend,
+        )
+        self.tie_breaker = (tie_breaker or "none").strip().lower()
+
     def score_components(self, completion: str, prompt: str) -> Dict[str, float]:
         """Return raw execution fraction, shaping bonus, and final shaped reward."""
         task = self._lookup_task(prompt)
@@ -187,7 +204,12 @@ class ExecutionShapedReward(ExecutionReward):
         if frac >= 1.0:
             return {"exec_frac": 1.0, "shaping_bonus": 0.0, "reward": 1.0}
         bonus = float(self._shaping_bonus(code, func_name))
-        reward = min(1.0, frac * self.TESTS_WEIGHT + bonus)
+        reward = float(frac * self.TESTS_WEIGHT + bonus)
+        # Optional: break ties among many exec_frac==0 samples without changing
+        # the core reward unless explicitly enabled.
+        if self.tie_breaker != "none":
+            reward += float(self._tie_break_bonus(code))
+        reward = min(1.0, reward)
         return {"exec_frac": frac, "shaping_bonus": bonus, "reward": float(reward)}
 
     def __call__(self, completion: str, prompt: str) -> float:
@@ -209,6 +231,23 @@ class ExecutionShapedReward(ExecutionReward):
         if any(line.startswith(("    ", "\t")) for line in completion.splitlines()):
             bonus += 0.02
         return bonus
+
+    def _tie_break_bonus(self, code: str) -> float:
+        """Small continuous bonus to reduce reward ties (default-off)."""
+        key = self.tie_breaker
+        if key == "ast_size":
+            try:
+                tree = ast.parse(code)
+                n = sum(1 for _ in ast.walk(tree))
+                # Log-scaled, tiny magnitude to avoid overpowering exec_frac.
+                # Typical: 0.0–0.01 range.
+                return float(min(0.01, 0.002 * (1.0 + (n / 50.0)) ** 0.5))
+            except SyntaxError:
+                return 0.0
+        if key == "code_len":
+            n = len(code)
+            return float(min(0.01, 0.00002 * n))
+        return 0.0
 
 
 class ExecutionLiteReward(ExecutionShapedReward):
@@ -244,6 +283,7 @@ def build_reward_function(
     timeout: float = 2.0,
     project_root: Optional[Path] = None,
     backend: Optional[ExecutionBackend] = None,
+    tie_breaker: str = "none",
 ) -> RewardFunction:
     key = name.strip().lower()
     if key == "syntax":
@@ -263,6 +303,7 @@ def build_reward_function(
             timeout=timeout,
             project_root=project_root,
             backend=backend,
+            tie_breaker=tie_breaker,
         )
     raise ValueError(f"Unknown reward function: {name}")
 

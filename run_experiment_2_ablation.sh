@@ -237,6 +237,7 @@ base_cmd() {
     --dataset-split "$DATASET_SPLIT" \
     --max-tasks "$MAX_TASKS" \
     --reward "$REWARD" \
+    --reward-tie-breaker "${REWARD_TIE_BREAKER:-none}" \
     --reward-timeout "$REWARD_TIMEOUT" \
     --execution-backend apptainer \
     --sandbox-image "$SANDBOX_SIF" \
@@ -252,6 +253,8 @@ base_cmd() {
     --num-baseline-samples "$NUM_BASELINE_SAMPLES" \
     --temperature "$TEMPERATURE" \
     --train-sampling-temperature "$TRAIN_SAMPLING_TEMPERATURE" \
+    --trace-every-steps "${TRACE_EVERY_STEPS:-0}" \
+    --trace-dir "${TRACE_DIR:-traces}" \
     --checkpoint-dir "$CHECKPOINT_DIR" \
     "${CKPT_ARGS[@]}" \
     "$@"

@@ -40,6 +40,7 @@ class EntropyGuidedTreeBuilder:
             or tokenizer.eos_token_id
             or tokenizer.mask_token_id
         )
+        self._gen_diag_count = 0
 
     # ---- Public API ----
 
@@ -373,6 +374,14 @@ class EntropyGuidedTreeBuilder:
         response_region[prompt_len : prompt_len + max_new] = True
         transitions: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
         temperature = temperature_override if temperature_override > 0 else self.config.temperature
+        # Quick sanity log: confirm we're sampling (temperature > 0).
+        if self._gen_diag_count < 3:
+            self._gen_diag_count += 1
+            print(
+                f"[dream-gen diag] mode=baseline_trajectory "
+                f"temperature={float(temperature):.4f} top_p={float(self.config.top_p):.3f} "
+                f"max_new_tokens={int(self.config.max_new_tokens)}"
+            )
 
         with torch.no_grad():
             while True:

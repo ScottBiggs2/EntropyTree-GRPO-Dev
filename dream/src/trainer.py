@@ -5,8 +5,10 @@ tests should use tiny mock models; real Dream weights are intended
 to be loaded only on a cloud GPU.
 """
 
-from typing import Callable, Dict, Iterable, List, Optional
+from pathlib import Path
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
+import ast
 import torch
 
 from dream.src.config import MCTSConfig
@@ -18,6 +20,8 @@ from dream.src.entropy import EntropyComputer
 from dream.src.time_weight import TimeWeighter
 from dream.src.model_adapter import ModelAdapter
 from dream.src.observability import tree_diversity_metrics
+from dream.src.tree_trace import build_tree_trace, write_tree_trace_json
+from dream.src.formatting import normalize_completion_for_reward
 
 
 RewardFn = Callable[[str, str], float]
@@ -51,6 +55,36 @@ def _grad_norm(params: Iterable[torch.nn.Parameter]) -> float:
             g = g.coalesce().values()
         total_sq += float(g.float().pow(2).sum().item())
     return float(total_sq**0.5)
+
+
+def _unique_frac(xs: List[object]) -> float:
+    if not xs:
+        return 0.0
+    return float(len(set(xs))) / float(len(xs))
+
+
+def _trajectory_signature(
+    transitions: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]], mask_id: int
+) -> Tuple[Tuple[Tuple[int, ...], Tuple[int, ...]], ...]:
+    """Hashable trajectory signature: per-step (changed_positions, changed_tokens)."""
+    sig: List[Tuple[Tuple[int, ...], Tuple[int, ...]]] = []
+    for parent_state, child_state, _attn in transitions:
+        changed = (parent_state != child_state) & (parent_state == mask_id)
+        pos = changed.nonzero(as_tuple=False).view(-1)
+        positions = tuple(int(i.item()) for i in pos)
+        tokens = tuple(int(child_state[i].item()) for i in pos)
+        sig.append((positions, tokens))
+    return tuple(sig)
+
+
+def _is_parseable_python(code: str) -> bool:
+    if not code.strip():
+        return False
+    try:
+        ast.parse(code)
+        return True
+    except SyntaxError:
+        return False
 
 
 class BaselineGRPOTrainer:
@@ -111,6 +145,8 @@ class BaselineGRPOTrainer:
         rewards = [self.reward_fn(c, prompt) for c, _ in trajectories]
         exec_frac_mean = 0.0
         shaping_bonus_mean = 0.0
+        exec_frac_std = 0.0
+        shaping_bonus_std = 0.0
         if hasattr(self.reward_fn, "score_components"):
             comps = [self.reward_fn.score_components(c, prompt) for c, _ in trajectories]  # type: ignore[attr-defined]
             if comps:
@@ -118,8 +154,52 @@ class BaselineGRPOTrainer:
                 shaping_bonus_mean = float(
                     sum(d.get("shaping_bonus", 0.0) for d in comps) / len(comps)
                 )
+                ef = [float(d.get("exec_frac", 0.0)) for d in comps]
+                sb = [float(d.get("shaping_bonus", 0.0)) for d in comps]
+                ef_m = sum(ef) / max(len(ef), 1)
+                sb_m = sum(sb) / max(len(sb), 1)
+                exec_frac_std = float(
+                    (sum((x - ef_m) ** 2 for x in ef) / max(len(ef), 1)) ** 0.5
+                )
+                shaping_bonus_std = float(
+                    (sum((x - sb_m) ** 2 for x in sb) / max(len(sb), 1)) ** 0.5
+                )
         mean_reward = sum(rewards) / len(rewards) if rewards else 0.0
         rstats = _reward_stats(rewards)
+
+        # Diversity diagnostics (help debug reward/sampling collapse).
+        completions = [c for c, _ in trajectories]
+        completion_unique_frac = _unique_frac(completions)
+
+        entry_point = None
+        if hasattr(self.reward_fn, "_lookup_task"):
+            try:
+                task = self.reward_fn._lookup_task(prompt)  # type: ignore[attr-defined]
+                if task is not None:
+                    entry_point = getattr(task, "entry_point", None) or task.get("entry_point")
+            except Exception:
+                entry_point = None
+
+        norm_codes = [
+            normalize_completion_for_reward(c, entry_point=entry_point) for c in completions
+        ]
+        norm_code_unique_frac = _unique_frac(norm_codes)
+        norm_code_mean_len = float(sum(len(c) for c in norm_codes) / max(len(norm_codes), 1))
+        norm_code_parseable_frac = float(
+            sum(1 for c in norm_codes if _is_parseable_python(c)) / max(len(norm_codes), 1)
+        )
+
+        traj_sigs = [
+            _trajectory_signature(trans, self.adapter.mask_id) for _, trans in trajectories
+        ]
+        traj_unique_frac = _unique_frac(traj_sigs)
+
+        sampling_diag = {}
+        if hasattr(self.adapter, "get_and_clear_sampling_diag"):
+            try:
+                sampling_diag = self.adapter.get_and_clear_sampling_diag()  # type: ignore[attr-defined]
+            except Exception:
+                sampling_diag = {}
 
         advantages = [r - mean_reward for r in rewards]
         adv_std = (sum(a * a for a in advantages) / max(len(advantages), 1)) ** 0.5
@@ -200,11 +280,30 @@ class BaselineGRPOTrainer:
             "max_reward": max(rewards) if rewards else 0.0,
             **rstats,
             "exec_frac_mean": float(exec_frac_mean),
+            "exec_frac_std": float(exec_frac_std),
             "shaping_bonus_mean": float(shaping_bonus_mean),
+            "shaping_bonus_std": float(shaping_bonus_std),
+            "flat_completion_unique_frac": float(completion_unique_frac),
+            "flat_norm_code_unique_frac": float(norm_code_unique_frac),
+            "flat_norm_code_mean_len": float(norm_code_mean_len),
+            "flat_norm_code_parseable_frac": float(norm_code_parseable_frac),
+            "flat_trajectory_unique_frac": float(traj_unique_frac),
+            **{f"flat_{k}": float(v) for k, v in sampling_diag.items()},
             "adv_std_raw": float(adv_std),
             "mean_norm_logp": float(log_prob_stack.detach().mean().item()),
             "std_norm_logp": float(log_prob_stack.detach().std(unbiased=False).item()),
             "grad_norm": float(grad_norm),
+            # Guidance metrics for “reward collapse”: if exec_frac_std≈0 and shaping_bonus_std≈0,
+            # distinct completions will still tie on reward (advantages ~0).
+            "flat_reward_collapse_flag": float(
+                1.0
+                if (
+                    (rstats.get("unique_rewards_frac", 0.0) <= 1.0 / max(float(K), 1.0) + 1e-12)
+                    and exec_frac_std < 1e-9
+                    and shaping_bonus_std < 1e-9
+                )
+                else 0.0
+            ),
             "tree_nodes": 0.0,
             "tree_leaves": float(K),
             "avg_entropy": 0.0,
@@ -258,12 +357,22 @@ class EntropyMCTSTrainer:
         # Use adapter's vocab_size for correct entropy normalization.
         self.vocab_size = self.adapter.vocab_size
         self._diag_count = 0
+        self._trace_count = 0
 
-    def eval_step(self, prompt: str) -> Dict[str, float]:
+    def eval_step(self, prompt: str, *, step_id: int = 0, epoch: int = 0, prompt_idx: int = 0, phase: str = "initial_eval") -> Dict[str, float]:
         """Build tree and score completions; no backward / optimizer (initial baseline)."""
         self.model.eval()
         with torch.no_grad():
             root, leaves = self.tree_builder.build_tree(prompt)
+        self._maybe_write_trace(
+            root=root,
+            leaves=leaves,
+            prompt=prompt,
+            step_id=step_id,
+            epoch=epoch,
+            prompt_idx=prompt_idx,
+            phase=phase,
+        )
         if not leaves:
             return {
                 "loss": 0.0,
@@ -312,7 +421,7 @@ class EntropyMCTSTrainer:
             **tree_diversity_metrics(root, leaves),
         }
 
-    def train_step(self, prompt: str) -> Dict[str, float]:
+    def train_step(self, prompt: str, *, step_id: int = 0, epoch: int = 0, prompt_idx: int = 0, phase: str = "baseline_train") -> Dict[str, float]:
         """One training step: build tree, compute loss, update model."""
         self.model.eval()
         root, leaves = self.tree_builder.build_tree(prompt)
@@ -335,6 +444,15 @@ class EntropyMCTSTrainer:
             for leaf in leaves
         ]
         rewards = [self.reward_fn(c, prompt) for c in completions]
+        self._maybe_write_trace(
+            root=root,
+            leaves=leaves,
+            prompt=prompt,
+            step_id=step_id,
+            epoch=epoch,
+            prompt_idx=prompt_idx,
+            phase=phase,
+        )
         rstats = _reward_stats(rewards)
         exec_frac_mean = 0.0
         shaping_bonus_mean = 0.0
@@ -426,4 +544,53 @@ class EntropyMCTSTrainer:
         metrics.update({k: float(v) for k, v in loss_metrics.items()})
         metrics.update(tree_diversity_metrics(root, leaves))
         return metrics
+
+    def _maybe_write_trace(
+        self,
+        *,
+        root: MCTSNode,
+        leaves: List[MCTSNode],
+        prompt: str,
+        step_id: int,
+        epoch: int,
+        prompt_idx: int,
+        phase: str,
+    ) -> None:
+        every = int(getattr(self.config, "trace_every_steps", 0) or 0)
+        if every <= 0:
+            return
+        if step_id % every != 0:
+            return
+        trace_dir = str(getattr(self.config, "trace_dir", "traces") or "traces")
+        max_nodes = int(getattr(self.config, "trace_max_nodes", 0) or 0)
+        max_leaves = int(getattr(self.config, "trace_max_leaves", 0) or 0)
+        decode_chars = int(getattr(self.config, "trace_decode_chars", 240) or 240)
+
+        payload = build_tree_trace(
+            root=root,
+            leaves=leaves,
+            tokenizer=self.tokenizer,
+            cfg=self.config,
+            vocab_size=self.vocab_size,
+            prompt=prompt,
+            phase=phase,
+            step_id=step_id,
+            prompt_idx=prompt_idx,
+            epoch=epoch,
+            entropy_computer=self.entropy_computer,
+            time_weighter=self.time_weighter,
+            max_nodes=max_nodes,
+            max_leaves=max_leaves,
+            decode_chars=decode_chars,
+        )
+        out = (
+            Path(trace_dir)
+            / str(self.config.run_name or "run")
+            / phase
+            / f"step_{step_id:07d}_prompt_{prompt_idx:04d}.json"
+        )
+        path = write_tree_trace_json(out, payload)
+        self._trace_count += 1
+        if self._trace_count <= 3:
+            print(f"[dream-trace] wrote {path}")
 
