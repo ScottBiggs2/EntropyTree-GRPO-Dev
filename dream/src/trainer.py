@@ -5,7 +5,7 @@ tests should use tiny mock models; real Dream weights are intended
 to be loaded only on a cloud GPU.
 """
 
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, Iterable, List, Optional
 
 import torch
 
@@ -21,6 +21,36 @@ from dream.src.observability import tree_diversity_metrics
 
 
 RewardFn = Callable[[str, str], float]
+
+
+def _reward_stats(rewards: List[float]) -> Dict[str, float]:
+    if not rewards:
+        return {
+            "reward_std": 0.0,
+            "reward_range": 0.0,
+            "unique_rewards_frac": 0.0,
+        }
+    mean = sum(rewards) / len(rewards)
+    var = sum((r - mean) ** 2 for r in rewards) / max(len(rewards), 1)
+    std = var**0.5
+    n_unique = len(set(round(r, 6) for r in rewards))
+    return {
+        "reward_std": float(std),
+        "reward_range": float(max(rewards) - min(rewards)),
+        "unique_rewards_frac": float(n_unique) / float(len(rewards)),
+    }
+
+
+def _grad_norm(params: Iterable[torch.nn.Parameter]) -> float:
+    total_sq = 0.0
+    for p in params:
+        if p.grad is None:
+            continue
+        g = p.grad.detach()
+        if g.is_sparse:
+            g = g.coalesce().values()
+        total_sq += float(g.float().pow(2).sum().item())
+    return float(total_sq**0.5)
 
 
 class BaselineGRPOTrainer:
@@ -79,7 +109,17 @@ class BaselineGRPOTrainer:
             )
             trajectories.append((completion, trans))
         rewards = [self.reward_fn(c, prompt) for c, _ in trajectories]
+        exec_frac_mean = 0.0
+        shaping_bonus_mean = 0.0
+        if hasattr(self.reward_fn, "score_components"):
+            comps = [self.reward_fn.score_components(c, prompt) for c, _ in trajectories]  # type: ignore[attr-defined]
+            if comps:
+                exec_frac_mean = float(sum(d.get("exec_frac", 0.0) for d in comps) / len(comps))
+                shaping_bonus_mean = float(
+                    sum(d.get("shaping_bonus", 0.0) for d in comps) / len(comps)
+                )
         mean_reward = sum(rewards) / len(rewards) if rewards else 0.0
+        rstats = _reward_stats(rewards)
 
         advantages = [r - mean_reward for r in rewards]
         adv_std = (sum(a * a for a in advantages) / max(len(advantages), 1)) ** 0.5
@@ -142,6 +182,7 @@ class BaselineGRPOTrainer:
 
         self.optimizer.zero_grad()
         loss.backward()
+        grad_norm = _grad_norm(p for p in self.model.parameters() if p.requires_grad)
         torch.nn.utils.clip_grad_norm_(
             self.model.parameters(), self.config.max_grad_norm
         )
@@ -157,6 +198,13 @@ class BaselineGRPOTrainer:
             "mean_reward": mean_reward,
             "min_reward": min_r,
             "max_reward": max(rewards) if rewards else 0.0,
+            **rstats,
+            "exec_frac_mean": float(exec_frac_mean),
+            "shaping_bonus_mean": float(shaping_bonus_mean),
+            "adv_std_raw": float(adv_std),
+            "mean_norm_logp": float(log_prob_stack.detach().mean().item()),
+            "std_norm_logp": float(log_prob_stack.detach().std(unbiased=False).item()),
+            "grad_norm": float(grad_norm),
             "tree_nodes": 0.0,
             "tree_leaves": float(K),
             "avg_entropy": 0.0,
@@ -287,6 +335,16 @@ class EntropyMCTSTrainer:
             for leaf in leaves
         ]
         rewards = [self.reward_fn(c, prompt) for c in completions]
+        rstats = _reward_stats(rewards)
+        exec_frac_mean = 0.0
+        shaping_bonus_mean = 0.0
+        if hasattr(self.reward_fn, "score_components"):
+            comps = [self.reward_fn.score_components(c, prompt) for c in completions]  # type: ignore[attr-defined]
+            if comps:
+                exec_frac_mean = float(sum(d.get("exec_frac", 0.0) for d in comps) / len(comps))
+                shaping_bonus_mean = float(
+                    sum(d.get("shaping_bonus", 0.0) for d in comps) / len(comps)
+                )
 
         if self._diag_count < 3:
             self._diag_count += 1
@@ -333,6 +391,7 @@ class EntropyMCTSTrainer:
         )
         if not per_trans:
             loss.backward()
+        grad_norm = _grad_norm(p for p in self.model.parameters() if p.requires_grad)
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
         self.optimizer.step()
         if self.scheduler is not None:
@@ -354,6 +413,10 @@ class EntropyMCTSTrainer:
             "mean_reward": avg_reward,
             "min_reward": min_reward,
             "max_reward": max_reward,
+            **rstats,
+            "exec_frac_mean": float(exec_frac_mean),
+            "shaping_bonus_mean": float(shaping_bonus_mean),
+            "grad_norm": float(grad_norm),
             "tree_nodes": float(count_nodes(root)),
             "tree_leaves": float(len(leaves)),
             "avg_entropy": avg_entropy,

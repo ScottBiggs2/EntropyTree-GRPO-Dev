@@ -1,0 +1,154 @@
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from /home/biggs.s/.netrc.
+wandb: Currently logged in as: scottbiggs2001 (scottbiggs2001-northeastern-university) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Tracking run with wandb version 0.25.1
+wandb: Run data is saved locally in /home/biggs.s/EntropyTree-GRPO-Dream/wandb/run-20260330_021535-axk0ihbj
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run ablation_5516336_initial_eval_initial_eval
+wandb: ⭐️ View project at https://wandb.ai/scottbiggs2001-northeastern-university/entropy-tree-grpo-dream
+wandb: 🚀 View run at https://wandb.ai/scottbiggs2001-northeastern-university/entropy-tree-grpo-dream/runs/axk0ihbj
+
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]
+Loading checkpoint shards:  25%|██▌       | 1/4 [00:00<00:00,  9.05it/s]
+Loading checkpoint shards:  50%|█████     | 2/4 [00:00<00:00,  9.54it/s]
+Loading checkpoint shards: 100%|██████████| 4/4 [00:00<00:00, 10.50it/s]
+Loading checkpoint shards: 100%|██████████| 4/4 [00:00<00:00, 10.22it/s]
+/home/biggs.s/miniconda/envs/EntropyTreeGRPO_Dream_env/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:590: UserWarning: `do_sample` is set to `False`. However, `temperature` is set to `0.0` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `temperature`. This was detected when initializing the generation config instance, which means the corresponding file may hold incorrect parameterization and should be fixed.
+  warnings.warn(
+/home/biggs.s/miniconda/envs/EntropyTreeGRPO_Dream_env/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:590: UserWarning: `do_sample` is set to `False`. However, `temperature` is set to `0.0` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `temperature`.
+  warnings.warn(
+wandb: updating run metadata
+wandb: uploading wandb-summary.json
+wandb: 
+wandb: Run history:
+wandb:                    avg_entropy █▃▁
+wandb:      avg_pairwise_leaf_hamming █▁▁
+wandb: avg_pairwise_schedule_distance █▁▁
+wandb:                     avg_reward ██▁
+wandb:          cfg_adaptive_stepping ▁▁▁
+wandb:              cfg_alpha_entropy ▁▁▁
+wandb:                 cfg_alpha_time ▁▁▁
+wandb:           cfg_branch_threshold ▁▁▁
+wandb:         cfg_entropy_weight_max ▁▁▁
+wandb:         cfg_entropy_weight_min ▁▁▁
+wandb:                            +44 ...
+wandb: 
+wandb: Run summary:
+wandb:                    avg_entropy 0.11806
+wandb:      avg_pairwise_leaf_hamming 0
+wandb: avg_pairwise_schedule_distance 0.01978
+wandb:                     avg_reward 0.14
+wandb:          cfg_adaptive_stepping 1
+wandb:              cfg_alpha_entropy 0.5
+wandb:                 cfg_alpha_time 1
+wandb:           cfg_branch_threshold 0.65
+wandb:         cfg_entropy_weight_max 2.5
+wandb:         cfg_entropy_weight_min 0.08
+wandb:                            +44 ...
+wandb: 
+wandb: 🚀 View run ablation_5516336_initial_eval_initial_eval at: https://wandb.ai/scottbiggs2001-northeastern-university/entropy-tree-grpo-dream/runs/axk0ihbj
+wandb: ⭐️ View project at: https://wandb.ai/scottbiggs2001-northeastern-university/entropy-tree-grpo-dream
+wandb: Synced 5 W&B file(s), 0 media file(s), 0 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260330_021535-axk0ihbj/logs
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from /home/biggs.s/.netrc.
+wandb: Currently logged in as: scottbiggs2001 (scottbiggs2001-northeastern-university) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Tracking run with wandb version 0.25.1
+wandb: Run data is saved locally in /home/biggs.s/EntropyTree-GRPO-Dream/wandb/run-20260330_021829-8uufsyge
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run ablation_5516336_flat_grpo_grpo_lora_baseline
+wandb: ⭐️ View project at https://wandb.ai/scottbiggs2001-northeastern-university/entropy-tree-grpo-dream
+wandb: 🚀 View run at https://wandb.ai/scottbiggs2001-northeastern-university/entropy-tree-grpo-dream/runs/8uufsyge
+
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]
+Loading checkpoint shards:  25%|██▌       | 1/4 [00:00<00:00,  8.85it/s]
+Loading checkpoint shards:  50%|█████     | 2/4 [00:00<00:00,  9.34it/s]
+Loading checkpoint shards: 100%|██████████| 4/4 [00:00<00:00, 10.38it/s]
+Loading checkpoint shards: 100%|██████████| 4/4 [00:00<00:00, 10.08it/s]
+/home/biggs.s/miniconda/envs/EntropyTreeGRPO_Dream_env/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:590: UserWarning: `do_sample` is set to `False`. However, `temperature` is set to `0.0` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `temperature`. This was detected when initializing the generation config instance, which means the corresponding file may hold incorrect parameterization and should be fixed.
+  warnings.warn(
+/home/biggs.s/miniconda/envs/EntropyTreeGRPO_Dream_env/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:590: UserWarning: `do_sample` is set to `False`. However, `temperature` is set to `0.0` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `temperature`.
+  warnings.warn(
+`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`...
+wandb: updating run metadata
+wandb: uploading history steps 94-95, summary, console lines 139-140
+wandb: 
+wandb: Run history:
+wandb:              avg_entropy ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:               avg_reward ██▁██████▁███▁▁▁█▁██▁███▁▁▁████▁█▁▁▁▁█▁█
+wandb:    cfg_adaptive_stepping ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:        cfg_alpha_entropy ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:           cfg_alpha_time ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:     cfg_branch_threshold ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:   cfg_entropy_weight_max ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:   cfg_entropy_weight_min ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:            cfg_max_tasks ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb: cfg_num_baseline_samples ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb:                      +30 ...
+wandb: 
+wandb: Run summary:
+wandb:              avg_entropy 0
+wandb:               avg_reward 0.14
+wandb:    cfg_adaptive_stepping 0
+wandb:        cfg_alpha_entropy 0.5
+wandb:           cfg_alpha_time 1
+wandb:     cfg_branch_threshold 0.65
+wandb:   cfg_entropy_weight_max 2.5
+wandb:   cfg_entropy_weight_min 0.08
+wandb:            cfg_max_tasks 3
+wandb: cfg_num_baseline_samples 16
+wandb:                      +30 ...
+wandb: 
+wandb: 🚀 View run ablation_5516336_flat_grpo_grpo_lora_baseline at: https://wandb.ai/scottbiggs2001-northeastern-university/entropy-tree-grpo-dream/runs/8uufsyge
+wandb: ⭐️ View project at: https://wandb.ai/scottbiggs2001-northeastern-university/entropy-tree-grpo-dream
+wandb: Synced 5 W&B file(s), 0 media file(s), 0 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260330_021829-8uufsyge/logs
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from /home/biggs.s/.netrc.
+wandb: Currently logged in as: scottbiggs2001 (scottbiggs2001-northeastern-university) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Tracking run with wandb version 0.25.1
+wandb: Run data is saved locally in /home/biggs.s/EntropyTree-GRPO-Dream/wandb/run-20260330_033928-hcc7qc4g
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run ablation_5516336_mcts_n16_b2_s12_baseline_train
+wandb: ⭐️ View project at https://wandb.ai/scottbiggs2001-northeastern-university/entropy-tree-grpo-dream
+wandb: 🚀 View run at https://wandb.ai/scottbiggs2001-northeastern-university/entropy-tree-grpo-dream/runs/hcc7qc4g
+
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]
+Loading checkpoint shards:  25%|██▌       | 1/4 [00:00<00:00,  9.87it/s]
+Loading checkpoint shards:  75%|███████▌  | 3/4 [00:00<00:00, 11.27it/s]
+Loading checkpoint shards: 100%|██████████| 4/4 [00:00<00:00, 11.63it/s]
+/home/biggs.s/miniconda/envs/EntropyTreeGRPO_Dream_env/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:590: UserWarning: `do_sample` is set to `False`. However, `temperature` is set to `0.0` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `temperature`. This was detected when initializing the generation config instance, which means the corresponding file may hold incorrect parameterization and should be fixed.
+  warnings.warn(
+/home/biggs.s/miniconda/envs/EntropyTreeGRPO_Dream_env/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:590: UserWarning: `do_sample` is set to `False`. However, `temperature` is set to `0.0` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `temperature`.
+  warnings.warn(
+wandb: updating run metadata
+wandb: uploading summary
+wandb: 🚀 View run ablation_5516336_mcts_n16_b2_s12_baseline_train at: https://wandb.ai/scottbiggs2001-northeastern-university/entropy-tree-grpo-dream/runs/hcc7qc4g
+wandb: ⭐️ View project at: https://wandb.ai/scottbiggs2001-northeastern-university/entropy-tree-grpo-dream
+wandb: Synced 5 W&B file(s), 0 media file(s), 0 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260330_033928-hcc7qc4g/logs
+Traceback (most recent call last):
+  File "/home/biggs.s/EntropyTree-GRPO-Dream/dream/scripts/run_dream_comparison.py", line 654, in <module>
+    sys.exit(main())
+  File "/home/biggs.s/EntropyTree-GRPO-Dream/dream/scripts/run_dream_comparison.py", line 534, in main
+    metrics = trainer.train_step(prompt)
+  File "/home/biggs.s/EntropyTree-GRPO-Dream/dream/src/trainer.py", line 270, in train_step
+    root, leaves = self.tree_builder.build_tree(prompt)
+  File "/home/biggs.s/EntropyTree-GRPO-Dream/dream/src/tree_builder.py", line 56, in build_tree
+    self._compute_node_entropy(node)
+  File "/home/biggs.s/EntropyTree-GRPO-Dream/dream/src/tree_builder.py", line 140, in _compute_node_entropy
+    logits = self.adapter.forward_logits(ids, attn)
+  File "/home/biggs.s/EntropyTree-GRPO-Dream/dream/src/model_adapter.py", line 46, in forward_logits
+    logits = torch.cat([logits[:, :1], logits[:, :-1]], dim=1)
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 164.00 MiB. GPU 0 has a total capacity of 79.25 GiB of which 25.50 MiB is free. Including non-PyTorch memory, this process has 79.22 GiB memory in use. Of the allocated memory 78.29 GiB is allocated by PyTorch, and 436.96 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+Traceback (most recent call last):
+  File "/home/biggs.s/EntropyTree-GRPO-Dream/dream/scripts/run_dream_comparison.py", line 654, in <module>
+    sys.exit(main())
+  File "/home/biggs.s/EntropyTree-GRPO-Dream/dream/scripts/run_dream_comparison.py", line 534, in main
+    metrics = trainer.train_step(prompt)
+  File "/home/biggs.s/EntropyTree-GRPO-Dream/dream/src/trainer.py", line 270, in train_step
+    root, leaves = self.tree_builder.build_tree(prompt)
+  File "/home/biggs.s/EntropyTree-GRPO-Dream/dream/src/tree_builder.py", line 56, in build_tree
+    self._compute_node_entropy(node)
+  File "/home/biggs.s/EntropyTree-GRPO-Dream/dream/src/tree_builder.py", line 140, in _compute_node_entropy
+    logits = self.adapter.forward_logits(ids, attn)
+  File "/home/biggs.s/EntropyTree-GRPO-Dream/dream/src/model_adapter.py", line 46, in forward_logits
+    logits = torch.cat([logits[:, :1], logits[:, :-1]], dim=1)
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 164.00 MiB. GPU 0 has a total capacity of 79.25 GiB of which 25.50 MiB is free. Including non-PyTorch memory, this process has 79.22 GiB memory in use. Of the allocated memory 78.29 GiB is allocated by PyTorch, and 436.96 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)

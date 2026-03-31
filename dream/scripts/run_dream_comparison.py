@@ -249,10 +249,10 @@ def main() -> int:
     p.add_argument(
         "--train-sampling-temperature",
         type=float,
-        default=0.6,
+        default=0.8,
         dest="train_sampling_temperature",
         help="Training-time generation temperature for flat GRPO and tree expansion "
-        "(default 0.6; higher ⇒ more diversity across K samples / siblings). "
+        "(default 0.8; higher ⇒ more diversity across K samples / siblings). "
         "Set to 0 to fall back to --temperature.",
     )
     p.add_argument("--lora", action="store_true", help="PEFT LoRA (recommended on ~32GB)")

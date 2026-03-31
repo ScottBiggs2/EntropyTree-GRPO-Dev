@@ -38,7 +38,7 @@ class MCTSConfig:
     temperature: float = 0.2
     # Higher temperature for training-time generation (BaselineGRPOTrainer)
     # to ensure diversity across K samples.  0 = use config.temperature.
-    train_sampling_temperature: float = 0.6
+    train_sampling_temperature: float = 0.8
     top_p: float = 0.95
     remasking: str = "low_confidence"
     # Dream-specific generation params (for baseline GRPO / diffusion_generate)

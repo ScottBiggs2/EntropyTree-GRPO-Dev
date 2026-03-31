@@ -169,26 +169,29 @@ class ExecutionShapedReward(ExecutionReward):
 
     TESTS_WEIGHT = 0.80
 
-    def __call__(self, completion: str, prompt: str) -> float:
+    def score_components(self, completion: str, prompt: str) -> Dict[str, float]:
+        """Return raw execution fraction, shaping bonus, and final shaped reward."""
         task = self._lookup_task(prompt)
         if task is None:
-            return 0.0
+            return {"exec_frac": 0.0, "shaping_bonus": 0.0, "reward": 0.0}
         code = self._normalized_code(completion, prompt)
         if not code:
-            return 0.0
+            return {"exec_frac": 0.0, "shaping_bonus": 0.0, "reward": 0.0}
         starter_code = getattr(task, "starter_code", None) or task.get("starter_code", "")
         func_name = getattr(task, "entry_point", None) or task.get("entry_point")
         tests = getattr(task, "tests", None) or task.get("tests", [])
         test_format = getattr(task, "test_format", None) or task.get(
             "test_format", "args_expected"
         )
-        frac = self._run(code, starter_code, func_name, tests, test_format)
+        frac = float(self._run(code, starter_code, func_name, tests, test_format))
         if frac >= 1.0:
-            return 1.0
+            return {"exec_frac": 1.0, "shaping_bonus": 0.0, "reward": 1.0}
+        bonus = float(self._shaping_bonus(code, func_name))
+        reward = min(1.0, frac * self.TESTS_WEIGHT + bonus)
+        return {"exec_frac": frac, "shaping_bonus": bonus, "reward": float(reward)}
 
-        reward = frac * self.TESTS_WEIGHT
-        reward += self._shaping_bonus(code, func_name)
-        return min(1.0, reward)
+    def __call__(self, completion: str, prompt: str) -> float:
+        return float(self.score_components(completion, prompt)["reward"])
 
     def _shaping_bonus(self, completion: str, func_name: str) -> float:
         bonus = 0.0

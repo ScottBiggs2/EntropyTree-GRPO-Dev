@@ -14,6 +14,10 @@
 #   sbatch train_sandbox_full.sbatch
 #
 # Tree-only (skip eval + flat): RUN_INITIAL_EVAL=0 RUN_FLAT_BASELINE=0 sbatch train_sandbox_full.sbatch
+# Debug-safe tree-only preset (single small MCTS run): MCTS_DEBUG=1 sbatch train_sandbox_full.sbatch
+#
+# OOM guardrails live in `run_experiment_2_ablation.sh`:
+# - MAX_NEW_TOKENS is clamped to 256 for MCTS unless ALLOW_BIG_TOKENS=1
 #
 #SBATCH --job-name=dream_train_full
 #SBATCH --output=logs/train_sandbox_full_%j.out
@@ -34,6 +38,7 @@ echo "======== train_sandbox_full: delegating to run_experiment_2_ablation.sh ==
 echo "Started: $(date -Is)"
 echo "Job ID: ${SLURM_JOB_ID:-n/a}  Host: $(hostname)"
 echo "TIP: Phase 3 is entropy-tree (baseline_train). Filter W&B by run_name prefix ablation_<jobid>_mcts_*"
+echo "TIP: For stability debug, use MCTS_DEBUG=1 (single small baseline_train run)."
 
 # Optional overrides (same env vars as run_experiment_2_ablation.sh), e.g.:
 #   TOTAL_DENOISING_STEPS  default 128 — global diffusion schedule (run_dream_comparison.py --total_denoising_steps);

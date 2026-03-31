@@ -137,10 +137,12 @@ MAX_TASKS="${MAX_TASKS:-3}"
 REWARD="${REWARD:-execution_shaped}"
 REWARD_TIMEOUT="${REWARD_TIMEOUT:-2.25}"
 
-NUM_EPOCHS="${NUM_EPOCHS:-32}"
-MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-512}"
+# NOTE: Defaults are chosen for stability on A100 80GB.
+NUM_EPOCHS="${NUM_EPOCHS:-20}"
+# 512 often OOMs in MCTS/tree (baseline_train). Use 256 by default and override only intentionally.
+MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-256}"
 TOTAL_DENOISING_STEPS="${TOTAL_DENOISING_STEPS:-128}"
-NUM_BASELINE_SAMPLES="${NUM_BASELINE_SAMPLES:-16}"
+NUM_BASELINE_SAMPLES="${NUM_BASELINE_SAMPLES:-8}"
 LEARNING_RATE="${LEARNING_RATE:-1e-6}"
 MIN_ADAPT="${MIN_ADAPT:-4}"
 MAX_ADAPT="${MAX_ADAPT:-36}"
@@ -148,7 +150,7 @@ BRANCH_THRESHOLD="${BRANCH_THRESHOLD:-0.65}"
 ENTROPY_WEIGHT_MIN="${ENTROPY_WEIGHT_MIN:-0.08}"
 ENTROPY_WEIGHT_MAX="${ENTROPY_WEIGHT_MAX:-2.5}"
 TEMPERATURE="${TEMPERATURE:-0.2}"
-TRAIN_SAMPLING_TEMPERATURE="${TRAIN_SAMPLING_TEMPERATURE:-0.6}"
+TRAIN_SAMPLING_TEMPERATURE="${TRAIN_SAMPLING_TEMPERATURE:-0.8}"
 
 CHECKPOINT_DIR="${CHECKPOINT_DIR:-/scratch/${USER}/entropy_tree_grpo_dream}"
 SAVE_EVERY="${SAVE_EVERY:-0}"
@@ -163,24 +165,52 @@ EVAL_MAX_TREE_NODES="${EVAL_MAX_TREE_NODES:-16}"
 EVAL_BRANCH_WIDTH="${EVAL_BRANCH_WIDTH:-2}"
 EVAL_STEPS_PER_EXPANSION="${EVAL_STEPS_PER_EXPANSION:-12}"
 
+# Debug preset: run a single, small MCTS config (tree-only) to validate stability.
+# Usage: MCTS_DEBUG=1 sbatch run_experiment_2_ablation.sh
+if [ "${MCTS_DEBUG:-0}" = "1" ]; then
+  echo "INFO: MCTS_DEBUG=1 enabled (tree-only, single small config)."
+  RUN_INITIAL_EVAL=0
+  RUN_FLAT_BASELINE=0
+  RUN_MCTS_GRID=1
+  MAX_TASKS="${MAX_TASKS:-10}"
+  NUM_EPOCHS="${NUM_EPOCHS:-2}"
+  MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-128}"
+  TOTAL_DENOISING_STEPS="${TOTAL_DENOISING_STEPS:-128}"
+  NUM_BASELINE_SAMPLES="${NUM_BASELINE_SAMPLES:-4}"
+  MAX_NODES_ARRAY=(8)
+  BRANCH_ARRAY=(2)
+  STEPS_ARRAY=(8)
+fi
+
+# Guardrail: very large token budgets tend to OOM in MCTS (baseline_train).
+if [ "${RUN_MCTS_GRID:-1}" = "1" ] && [ "${ALLOW_BIG_TOKENS:-0}" != "1" ]; then
+  if [ "$MAX_NEW_TOKENS" -gt 256 ]; then
+    echo "WARN: MAX_NEW_TOKENS=$MAX_NEW_TOKENS is high for baseline_train; clamping to 256 (set ALLOW_BIG_TOKENS=1 to override)."
+    MAX_NEW_TOKENS=256
+  fi
+fi
+
 # Grid defaults (same spirit as legacy ablation)
-if [ -n "${MAX_NODES_LIST:-}" ]; then
-  # shellcheck disable=SC2206
-  MAX_NODES_ARRAY=($MAX_NODES_LIST)
-else
-  MAX_NODES_ARRAY=(16 32)
-fi
-if [ -n "${BRANCH_LIST:-}" ]; then
-  # shellcheck disable=SC2206
-  BRANCH_ARRAY=($BRANCH_LIST)
-else
-  BRANCH_ARRAY=(2 3)
-fi
-if [ -n "${STEPS_LIST:-}" ]; then
-  # shellcheck disable=SC2206
-  STEPS_ARRAY=($STEPS_LIST)
-else
-  STEPS_ARRAY=(12 24)
+# (Skip when MCTS_DEBUG=1 pre-sets a single config.)
+if [ "${MCTS_DEBUG:-0}" != "1" ]; then
+  if [ -n "${MAX_NODES_LIST:-}" ]; then
+    # shellcheck disable=SC2206
+    MAX_NODES_ARRAY=($MAX_NODES_LIST)
+  else
+    MAX_NODES_ARRAY=(8 16)
+  fi
+  if [ -n "${BRANCH_LIST:-}" ]; then
+    # shellcheck disable=SC2206
+    BRANCH_ARRAY=($BRANCH_LIST)
+  else
+    BRANCH_ARRAY=(2 3)
+  fi
+  if [ -n "${STEPS_LIST:-}" ]; then
+    # shellcheck disable=SC2206
+    STEPS_ARRAY=($STEPS_LIST)
+  else
+    STEPS_ARRAY=(12 24)
+  fi
 fi
 
 RUN_INITIAL_EVAL="${RUN_INITIAL_EVAL:-1}"
