@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import tempfile
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, List, Optional
 
@@ -178,7 +179,10 @@ class ContainerBackend(ExecutionBackend):
     def _run_apptainer(self, payload: dict[str, Any], timeout: float) -> float:
         tmpdir = None
         try:
-            tmpdir = tempfile.mkdtemp(prefix="dream_sandbox_")
+            tmpdir = tempfile.mkdtemp(
+                prefix=f"dream_sandbox_r{_dist_rank()}_",
+                dir=_sandbox_tmp_root(),
+            )
             config_path = os.path.join(tmpdir, "config.json")
             with open(config_path, "w") as f:
                 json.dump(payload, f)
@@ -199,7 +203,8 @@ class ContainerBackend(ExecutionBackend):
                 pass
 
             cmd.extend([self.image, "python", "/entrypoint.py", "/task/config.json"])
-            return self._exec(cmd, stdin_data=None, timeout=timeout)
+            with _maybe_node_sandbox_lock():
+                return self._exec(cmd, stdin_data=None, timeout=timeout)
         finally:
             if tmpdir:
                 try:
@@ -249,3 +254,62 @@ def make_backend(
     raise ValueError(
         f"Unknown backend {name!r}. Choose from: subprocess, docker, apptainer, container"
     )
+
+
+def _dist_rank() -> int:
+    try:
+        return int(os.environ.get("RANK", "0") or "0")
+    except Exception:
+        return 0
+
+
+def _sandbox_tmp_root() -> str | None:
+    """Pick a tmp root for per-rank sandbox payloads.
+
+    Prefer scratch (fast + large) when available; fall back to default temp dir.
+    """
+    base = os.environ.get("DREAM_SANDBOX_TMP_ROOT") or os.environ.get("TMPDIR") or ""
+    if base:
+        try:
+            os.makedirs(base, exist_ok=True)
+            return base
+        except Exception:
+            return None
+    user = os.environ.get("USER") or os.environ.get("USERNAME") or "user"
+    scratch_root = os.environ.get("SCRATCH") or "/scratch"
+    guess = os.path.join(scratch_root, user, "dream_sandbox_tmp")
+    try:
+        os.makedirs(guess, exist_ok=True)
+        return guess
+    except Exception:
+        return None
+
+
+@contextmanager
+def _maybe_node_sandbox_lock():
+    """Optionally serialize container runs per node to avoid Apptainer/fs overload.
+
+    Enable by setting DREAM_SANDBOX_MAX_CONCURRENT_PER_NODE=1.
+    """
+    if str(os.environ.get("DREAM_SANDBOX_MAX_CONCURRENT_PER_NODE", "")).strip() != "1":
+        yield
+        return
+    # Best-effort lock file in scratch.
+    user = os.environ.get("USER") or os.environ.get("USERNAME") or "user"
+    scratch_root = os.environ.get("SCRATCH") or "/scratch"
+    lock_dir = os.path.join(scratch_root, user, "dream_sandbox_locks")
+    try:
+        os.makedirs(lock_dir, exist_ok=True)
+    except Exception:
+        yield
+        return
+    lock_path = os.path.join(lock_dir, f"node_{os.uname().nodename}.lock")
+    try:
+        import fcntl
+
+        with open(lock_path, "w") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            yield
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    except Exception:
+        yield

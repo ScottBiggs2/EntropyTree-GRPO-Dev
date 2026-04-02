@@ -67,6 +67,9 @@ class MCTSConfig:
     # --- Generation ---
     total_denoising_steps: int = 256
     max_new_tokens: int = 256
+    # Cap the prompt length in tokens (0 = no cap). Useful for long AceCode stubs
+    # that can OOM tree entropy/logit passes since memory scales with (prompt_len + max_new_tokens).
+    max_prompt_tokens: int = 0
 
     # --- Training ---
     batch_size: int = 1

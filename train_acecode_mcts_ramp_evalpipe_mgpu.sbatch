@@ -1,30 +1,26 @@
 #!/bin/bash
-# Serious AceCode tree-GRPO run (hundreds+ tasks) with a **final-only** checkpoint
-# and an evaluation-friendly manifest file of checkpoint paths.
+# Multi-GPU AceCode tree-GRPO run with final checkpoint + afterok eval jobs.
 #
 # Submit from repo root:
 #   export WANDB_API_KEY=...
 #   export ACECODE_JSONL=/scratch/$USER/dream_data/acecode_hard_train.jsonl
-#   sbatch train_acecode_mcts_ramp_evalpipe.sbatch
-#
-# What you get:
-# - Final checkpoint under:     $CHECKPOINT_DIR/dream_comparison/$RUN_NAME/
-# - A manifest file:            $CHECKPOINT_DIR/dream_comparison/$RUN_NAME/checkpoints_manifest.jsonl
-#   (one JSON line per checkpoint, easy to tail/ingest)
+#   sbatch train_acecode_mcts_ramp_evalpipe_mgpu.sbatch
 #
 # Notes:
-# - This runs the tree phase only (baseline_train).
-# - Defaults are conservative for A100 80GB; adjust MAX_NEW_TOKENS / MAX_TREE_NODES upward cautiously.
+# - Uses torchrun DDP over prompts/tasks. Prompt shards are padded so each rank
+#   performs the same number of optimizer steps (required for DDP correctness).
+# - Checkpoint + adapter saving occurs on rank 0 only, so the evalpipe contract
+#   remains unchanged.
 
-#SBATCH --job-name=dream_acecode_mcts
-#SBATCH --output=logs/acecode_mcts_ramp_%j.out
-#SBATCH --error=logs/acecode_mcts_ramp_%j.err
-#SBATCH --partition=gpu
+#SBATCH --partition=multigpu
 #SBATCH --nodes=1
+#SBATCH --gres=gpu:4
+#SBATCH --time=08:00:00
+#SBATCH --job-name=pipe_p1_mcts_mgpu
+#SBATCH --mem=256G
 #SBATCH --ntasks=1
-#SBATCH --gres=gpu:a100:1
-#SBATCH --mem=128G
-#SBATCH --time=8:00:00
+#SBATCH --output=logs/pipeline_%j_p1_mcts_mgpu.out
+#SBATCH --error=logs/pipeline_%j_p1_mcts_mgpu.err
 
 set -euo pipefail
 
@@ -57,9 +53,16 @@ mkdir -p "$HF_HOME"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 
 # Apptainer sandbox (recommended for untrusted code execution on HPC)
+# IMPORTANT: make temp/cache rank-safe (torchrun spawns N processes).
 export APPTAINER_CACHEDIR="${APPTAINER_CACHEDIR:-/scratch/${USER}/containers/cache}"
 export APPTAINER_TMPDIR="${APPTAINER_TMPDIR:-/scratch/${USER}/containers/tmp}"
 mkdir -p "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR" || true
+
+export DREAM_SANDBOX_TMP_ROOT="${DREAM_SANDBOX_TMP_ROOT:-/scratch/${USER}/dream_sandbox_tmp}"
+mkdir -p "$DREAM_SANDBOX_TMP_ROOT" || true
+
+# Optional: serialize sandbox runs per node if Apptainer/filesystem gets flaky.
+# export DREAM_SANDBOX_MAX_CONCURRENT_PER_NODE=1
 
 python -m pip install -r dream/requirements.txt -q
 
@@ -79,11 +82,11 @@ WANDB_PROJECT="${WANDB_PROJECT:-entropy-tree-grpo-dream}"
 WANDB_GROUP="${WANDB_GROUP:-acecode_ramp_${JOB_ID}}"
 
 # Scale knobs (override via env before sbatch)
-MAX_TASKS="${MAX_TASKS:-512}"          # hundreds of tasks
-NUM_EPOCHS="${NUM_EPOCHS:-1}"          # start with 1 epoch; scale to 2+ once stable
+MAX_TASKS="${MAX_TASKS:-512}"
+NUM_EPOCHS="${NUM_EPOCHS:-1}"
 REWARD="${REWARD:-execution_shaped}"
 REWARD_TIMEOUT="${REWARD_TIMEOUT:-2.5}"
-REWARD_TIE_BREAKER="${REWARD_TIE_BREAKER:-none}"   # none|ast_size|code_len (optional)
+REWARD_TIE_BREAKER="${REWARD_TIE_BREAKER:-none}"
 
 # Tree + generation budgets (OOM-sensitive)
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-192}"
@@ -91,7 +94,6 @@ TOTAL_DENOISING_STEPS="${TOTAL_DENOISING_STEPS:-128}"
 MAX_TREE_NODES="${MAX_TREE_NODES:-12}"
 BRANCH_WIDTH="${BRANCH_WIDTH:-2}"
 STEPS_PER_EXPANSION="${STEPS_PER_EXPANSION:-8}"
-# Cap prompt length (AceCode can contain very long starter_code stubs).
 MAX_PROMPT_TOKENS="${MAX_PROMPT_TOKENS:-2048}"
 
 # Training HP
@@ -114,7 +116,7 @@ MANIFEST="${OUT_DIR}/checkpoints_manifest.jsonl"
 mkdir -p "$OUT_DIR"
 ADAPTER_DIR="${OUT_DIR}/adapter"
 
-echo "======== acecode mcts ramp (evalpipe) ========"
+echo "======== acecode mcts ramp (mgpu evalpipe) ========"
 echo "dataset=$ACECODE_JSONL split=train max_tasks=$MAX_TASKS epochs=$NUM_EPOCHS"
 echo "tree: nodes=$MAX_TREE_NODES branch=$BRANCH_WIDTH steps_per_expansion=$STEPS_PER_EXPANSION"
 echo "gen: max_new_tokens=$MAX_NEW_TOKENS total_denoising_steps=$TOTAL_DENOISING_STEPS"
@@ -124,11 +126,13 @@ echo "reward=$REWARD timeout=$REWARD_TIMEOUT tie_breaker=$REWARD_TIE_BREAKER"
 echo "checkpoints: dir=$OUT_DIR final_only=1 manifest=$MANIFEST"
 echo "adapter_dir: $ADAPTER_DIR"
 
-# Create/append manifest header row (JSONL)
-echo "{\"run_name\":\"${RUN_NAME}\",\"job_id\":\"${JOB_ID}\",\"event\":\"start\",\"timestamp\":\"$(date -Is)\",\"out_dir\":\"${OUT_DIR}\"}" >> "$MANIFEST"
+echo "{\"run_name\":\"${RUN_NAME}\",\"job_id\":\"${JOB_ID}\",\"event\":\"start\",\"timestamp\":\"$(date -Is)\",\"out_dir\":\"${OUT_DIR}\",\"ddp\":true}" >> "$MANIFEST"
+
+NPROC="${SLURM_GPUS_ON_NODE:-4}"
 
 set +e
-python dream/scripts/run_dream_comparison.py \
+torchrun --standalone --nnodes=1 --nproc_per_node="$NPROC" \
+  dream/scripts/run_dream_comparison.py \
   --phase baseline_train \
   --device cuda \
   --wandb_project "$WANDB_PROJECT" \
@@ -184,20 +188,16 @@ echo "Done. Checkpoints: $OUT_DIR"
 echo "Manifest: $MANIFEST"
 
 # --- Auto-schedule EvalPlus jobs on success ---
-# These eval scripts expect a PEFT adapter directory (saved by run_dream_comparison.py).
-# We schedule with dependency so they start after this job is OK.
 if [ -n "${SLURM_JOB_ID:-}" ] && [ "$RC" -eq 0 ] && [ -d "$ADAPTER_DIR" ]; then
   EVAL_OUT_BASE="${EVAL_OUT_BASE:-/scratch/${USER}/dream_eval/${RUN_NAME}}"
   mkdir -p "$EVAL_OUT_BASE" || true
   echo "Scheduling eval jobs with afterok dependency on ${SLURM_JOB_ID}"
   echo "Eval outputs under: $EVAL_OUT_BASE"
 
-  # pass@1 (fast)
   sbatch --dependency="afterok:${SLURM_JOB_ID}" \
     --export=ALL,ADAPTER="$ADAPTER_DIR",OUT_BASE="${EVAL_OUT_BASE}/pass1",RUN_PASS10=0 \
     eval_base_dream_evalplus.sbatch
 
-  # optional pass@10 (set RUN_PASS10=1 to enable in eval script)
   if [ "${EVAL_RUN_PASS10:-0}" = "1" ]; then
     sbatch --dependency="afterok:${SLURM_JOB_ID}" \
       --export=ALL,ADAPTER="$ADAPTER_DIR",OUT_BASE="${EVAL_OUT_BASE}/pass10",RUN_PASS10=1 \

@@ -134,6 +134,68 @@ PHASE_ORDER = (
 )
 
 
+def _dist_env() -> tuple[bool, int, int, int]:
+    """Return (enabled, rank, local_rank, world_size) from torchrun-style env."""
+    try:
+        world_size = int(os.environ.get("WORLD_SIZE", "1") or "1")
+    except Exception:
+        world_size = 1
+    enabled = world_size > 1
+    if not enabled:
+        return False, 0, 0, 1
+    rank = int(os.environ.get("RANK", "0") or "0")
+    local_rank = int(os.environ.get("LOCAL_RANK", "0") or "0")
+    return True, rank, local_rank, world_size
+
+
+def _maybe_init_distributed(*, device: str) -> tuple[bool, int, int, int]:
+    enabled, rank, local_rank, world_size = _dist_env()
+    if not enabled:
+        return False, 0, 0, 1
+    if device.startswith("cuda") and torch.cuda.is_available():
+        torch.cuda.set_device(local_rank)
+    torch.distributed.init_process_group(
+        backend="nccl" if device.startswith("cuda") else "gloo"
+    )
+    torch.distributed.barrier()
+    return True, rank, local_rank, world_size
+
+
+def _shard_prompts_for_ddp(
+    prompts: list[str], *, rank: int, world_size: int, pad_to_even: bool = True
+) -> list[str]:
+    """Shard prompts across ranks; optionally pad so each rank has equal steps.
+
+    DDP requires all ranks to participate in the same number of backward calls.
+    We pad by repeating within each rank's shard so every rank executes the same
+    number of train steps per epoch.
+    """
+    shard = prompts[rank::world_size]
+    if not pad_to_even:
+        return shard
+    max_len = (len(prompts) + world_size - 1) // world_size
+    if not shard:
+        return shard
+    if len(shard) < max_len:
+        need = max_len - len(shard)
+        shard = shard + [shard[i % len(shard)] for i in range(need)]
+    return shard
+
+
+def _reduce_numeric_metrics(metrics: dict[str, Any], *, world_size: int) -> dict[str, Any]:
+    if world_size <= 1 or not torch.distributed.is_initialized():
+        return metrics
+    out: dict[str, Any] = dict(metrics)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    for k, v in list(metrics.items()):
+        if not (isinstance(v, (int, float)) and not isinstance(v, bool)):
+            continue
+        t = torch.tensor(float(v), device=device)
+        torch.distributed.all_reduce(t, op=torch.distributed.ReduceOp.SUM)
+        out[k] = float((t / float(world_size)).item())
+    return out
+
+
 def _cuda_relax_after_train_step() -> None:
     """Free fragmented GPU memory between prompts (Dream 7B + tree can hit ~80GB peak)."""
     gc.collect()
@@ -245,6 +307,14 @@ def main() -> int:
         "Same role as diffusion_generate(..., steps=T); validate_dream.py uses steps=128.",
     )
     p.add_argument("--max_new_tokens", type=int, default=96)
+    p.add_argument(
+        "--max-prompt-tokens",
+        type=int,
+        default=0,
+        dest="max_prompt_tokens",
+        help="Cap prompt length in tokens for tree/baseline rollouts (0 = no cap). "
+        "Helps avoid OOM on very long AceCode stubs.",
+    )
     p.add_argument("--min_steps_per_expansion", type=int, default=8)
     p.add_argument("--max_steps_per_expansion", type=int, default=36)
     p.add_argument("--branch_threshold", type=float, default=0.65)
@@ -330,6 +400,12 @@ def main() -> int:
     p.add_argument("--trace-max-leaves", type=int, default=0, dest="trace_max_leaves")
     p.add_argument("--trace-decode-chars", type=int, default=240, dest="trace_decode_chars")
     args = p.parse_args()
+
+    ddp_enabled, rank, local_rank, world_size = _maybe_init_distributed(
+        device=str(args.device)
+    )
+    is_rank0 = rank == 0
+
     dataset_path = args.dataset or ""
     if args.reward in ("execution", "execution_shaped", "execution_lite") and not dataset_path:
         dataset_path = DEFAULT_LEGACY_DATASET
@@ -341,6 +417,11 @@ def main() -> int:
         max_tasks=args.max_tasks,
         phase=args.phase,
     )
+
+    if ddp_enabled:
+        prompts = _shard_prompts_for_ddp(
+            prompts, rank=rank, world_size=world_size, pad_to_even=True
+        )
 
     # Phase-specific tree / loss hyperparameters
     adaptive = False
@@ -374,11 +455,16 @@ def main() -> int:
     cfg = MCTSConfig(
         model_type="dream",
         model_name_or_path=args.model,
-        device=args.device,
+        device=(
+            f"cuda:{local_rank}"
+            if ddp_enabled and str(args.device).startswith("cuda")
+            else args.device
+        ),
         max_tree_nodes=args.max_tree_nodes,
         branch_width=args.branch_width,
         steps_per_expansion=args.steps_per_expansion,
         max_new_tokens=args.max_new_tokens,
+        max_prompt_tokens=args.max_prompt_tokens,
         total_denoising_steps=args.total_denoising_steps,
         adaptive_stepping=adaptive,
         min_steps_per_expansion=args.min_steps_per_expansion,
@@ -416,6 +502,10 @@ def main() -> int:
             else ""
         )
     )
+    if ddp_enabled:
+        print(
+            f"[dream_cmp] ddp=1 rank={rank} local_rank={local_rank} world_size={world_size} device={cfg.device}"
+        )
     print(
         f"[dream_cmp] adaptive_stepping={adaptive} branch_threshold={branch_threshold} "
         f"alpha_entropy={alpha_entropy} entropy_weight_min={args.entropy_weight_min}"
@@ -443,7 +533,8 @@ def main() -> int:
         print("[dream_cmp] checkpoints: disabled (default; no .pt files)")
 
     # Init W&B before model load so a failed load still creates a run (config visible in UI).
-    use_wandb = not args.no_wandb
+    # In DDP, only rank 0 logs (avoid duplicated runs + rate-limit issues).
+    use_wandb = (not args.no_wandb) and (not ddp_enabled or is_rank0)
     if use_wandb:
         import wandb
 
@@ -502,6 +593,18 @@ def main() -> int:
         if cfg.gradient_checkpointing and hasattr(model, "gradient_checkpointing_enable"):
             model.gradient_checkpointing_enable()
 
+        ddp_model = None
+        if ddp_enabled and train and str(cfg.device).startswith("cuda"):
+            ddp_model = torch.nn.parallel.DistributedDataParallel(
+                model,
+                device_ids=[local_rank],
+                output_device=local_rank,
+                find_unused_parameters=False,
+            )
+            model_for_train = ddp_model
+        else:
+            model_for_train = model
+
         backend = None
         if args.execution_backend != "subprocess":
             backend = make_backend(
@@ -518,7 +621,7 @@ def main() -> int:
             tie_breaker=args.reward_tie_breaker,
         )
         optimizer = torch.optim.AdamW(
-            (p for p in model.parameters() if p.requires_grad),
+            (p for p in model_for_train.parameters() if p.requires_grad),
             lr=cfg.learning_rate,
         )
         total_steps = max(1, epochs * len(prompts))
@@ -530,11 +633,11 @@ def main() -> int:
         )
         if args.phase in ("grpo_lora_baseline", "grpo_dense_baseline"):
             trainer = BaselineGRPOTrainer(
-                model, tokenizer, cfg, reward_fn, optimizer, scheduler
+                model_for_train, tokenizer, cfg, reward_fn, optimizer, scheduler
             )
         else:
             trainer = EntropyMCTSTrainer(
-                model, tokenizer, cfg, reward_fn, optimizer, scheduler
+                model_for_train, tokenizer, cfg, reward_fn, optimizer, scheduler
             )
 
         # Log these every step so W&B charts show which loss knobs apply (see dream/docs/WANDB_METRICS.md).
@@ -577,6 +680,7 @@ def main() -> int:
                         prompt_idx=pi,
                         phase=args.phase,
                     )
+                metrics = _reduce_numeric_metrics(metrics, world_size=world_size)
                 metrics["epoch"] = float(epoch)
                 metrics["prompt_idx"] = float(pi)
                 step_wall = time.perf_counter() - t_step0
@@ -603,7 +707,10 @@ def main() -> int:
                     if isinstance(v, (int, float)) and not isinstance(v, bool)
                 )
                 detail = " ".join(f"{k}={float(metrics[k]):.4f}" for k in numeric_keys)
-                print(f"[dream_cmp] epoch={epoch} step={global_step} {detail} wall_sec={step_wall:.2f}")
+                if not ddp_enabled or is_rank0:
+                    print(
+                        f"[dream_cmp] epoch={epoch} step={global_step} {detail} wall_sec={step_wall:.2f}"
+                    )
 
                 if train:
                     _cuda_relax_after_train_step()
@@ -614,19 +721,29 @@ def main() -> int:
                     and args.save_every_steps > 0
                     and global_step % args.save_every_steps == 0
                 ):
-                    save_dir = Path(args.checkpoint_dir) / "dream_comparison" / args.run_name
-                    save_dir.mkdir(parents=True, exist_ok=True)
-                    ckpt = save_dir / f"{args.phase}_step_{global_step}.pt"
-                    torch.save(
-                        {
-                            "model": model.state_dict(),
-                            "optimizer": optimizer.state_dict(),
-                            "step": global_step,
-                            "phase": args.phase,
-                        },
-                        ckpt,
-                    )
-                    print(f"[dream_cmp] saved {ckpt}")
+                    if not ddp_enabled or is_rank0:
+                        save_dir = (
+                            Path(args.checkpoint_dir)
+                            / "dream_comparison"
+                            / args.run_name
+                        )
+                        save_dir.mkdir(parents=True, exist_ok=True)
+                        ckpt = save_dir / f"{args.phase}_step_{global_step}.pt"
+                        model_state = (
+                            ddp_model.module.state_dict()
+                            if ddp_model is not None
+                            else model.state_dict()
+                        )
+                        torch.save(
+                            {
+                                "model": model_state,
+                                "optimizer": optimizer.state_dict(),
+                                "step": global_step,
+                                "phase": args.phase,
+                            },
+                            ckpt,
+                        )
+                        print(f"[dream_cmp] saved {ckpt}")
 
             for k in list(epoch_means.keys()):
                 epoch_means[k] /= max(n_prompts, 1)
@@ -648,15 +765,19 @@ def main() -> int:
                 else:
                     wandb.log(epoch_row, step=max(global_step - 1, 0))
 
-            print(f"[dream_cmp] epoch {epoch} mean metrics: {epoch_means}")
+            if not ddp_enabled or is_rank0:
+                print(f"[dream_cmp] epoch {epoch} mean metrics: {epoch_means}")
 
-        if train and args.save_checkpoints:
+        if train and args.save_checkpoints and (not ddp_enabled or is_rank0):
             save_dir = Path(args.checkpoint_dir) / "dream_comparison" / args.run_name
             save_dir.mkdir(parents=True, exist_ok=True)
             final = save_dir / f"{args.phase}_final.pt"
+            model_state = (
+                ddp_model.module.state_dict() if ddp_model is not None else model.state_dict()
+            )
             torch.save(
                 {
-                    "model": model.state_dict(),
+                    "model": model_state,
                     "optimizer": optimizer.state_dict(),
                     "step": global_step,
                     "phase": args.phase,
@@ -668,10 +789,11 @@ def main() -> int:
             print(f"[dream_cmp] wrote {final}")
             # If LoRA/PEFT is enabled, also save a PEFT adapter directory for eval scripts
             # (they accept --adapter and load via PeftModel.from_pretrained).
-            if use_lora and hasattr(model, "save_pretrained"):
+            save_model = ddp_model.module if ddp_model is not None else model
+            if use_lora and hasattr(save_model, "save_pretrained"):
                 adapter_dir = save_dir / "adapter"
                 try:
-                    model.save_pretrained(str(adapter_dir))
+                    save_model.save_pretrained(str(adapter_dir))
                     print(f"[dream_cmp] wrote adapter dir {adapter_dir}")
                 except Exception as e:
                     print(f"[dream_cmp WARN] failed to save adapter dir: {e}")
@@ -693,6 +815,8 @@ def main() -> int:
             else:
                 wandb.log(summary, step=final_step)
 
+        if ddp_enabled and torch.distributed.is_initialized():
+            torch.distributed.barrier()
         return 0
     finally:
         if use_wandb:
@@ -700,6 +824,11 @@ def main() -> int:
 
             if wandb.run is not None:
                 wandb.finish()
+        if ddp_enabled and torch.distributed.is_initialized():
+            try:
+                torch.distributed.destroy_process_group()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

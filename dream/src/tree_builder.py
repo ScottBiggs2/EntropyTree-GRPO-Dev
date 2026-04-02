@@ -113,6 +113,11 @@ class EntropyGuidedTreeBuilder:
         else:
             ids = self.tokenizer.encode(prompt, add_special_tokens=True)
 
+        max_prompt = int(getattr(self.config, "max_prompt_tokens", 0) or 0)
+        if max_prompt > 0 and len(ids) > max_prompt:
+            # Keep the most recent tokens; for chat templates this preserves the assistant prefix.
+            ids = ids[-max_prompt:]
+
         prompt_len = len(ids)
         max_new = self.config.max_new_tokens
         total_len = prompt_len + max_new
