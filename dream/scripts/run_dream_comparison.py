@@ -666,6 +666,15 @@ def main() -> int:
             with open(save_dir / f"{args.phase}_config.json", "w") as f:
                 json.dump(config_to_jsonable(cfg), f, indent=2)
             print(f"[dream_cmp] wrote {final}")
+            # If LoRA/PEFT is enabled, also save a PEFT adapter directory for eval scripts
+            # (they accept --adapter and load via PeftModel.from_pretrained).
+            if use_lora and hasattr(model, "save_pretrained"):
+                adapter_dir = save_dir / "adapter"
+                try:
+                    model.save_pretrained(str(adapter_dir))
+                    print(f"[dream_cmp] wrote adapter dir {adapter_dir}")
+                except Exception as e:
+                    print(f"[dream_cmp WARN] failed to save adapter dir: {e}")
 
         if use_wandb:
             import wandb
