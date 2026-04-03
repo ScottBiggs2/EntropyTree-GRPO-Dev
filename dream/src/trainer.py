@@ -23,6 +23,7 @@ from dream.src.observability import tree_diversity_metrics
 from dream.src.tree_trace import build_tree_trace, write_tree_trace_json
 from dream.src.formatting import normalize_completion_for_reward
 from dream.src.gpu_diag import log_cuda_mem, print_cuda_oom_context
+from dream.src.task_registry import task_field
 
 
 RewardFn = Callable[[str, str], float]
@@ -190,7 +191,7 @@ class BaselineGRPOTrainer:
             try:
                 task = self.reward_fn._lookup_task(prompt)  # type: ignore[attr-defined]
                 if task is not None:
-                    entry_point = getattr(task, "entry_point", None) or task.get("entry_point")
+                    entry_point = task_field(task, "entry_point", None)
             except Exception:
                 entry_point = None
 

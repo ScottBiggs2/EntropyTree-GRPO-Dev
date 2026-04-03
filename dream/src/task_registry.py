@@ -34,6 +34,18 @@ class CodeTask:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
+def task_field(task: Any, name: str, default: Any = None) -> Any:
+    """Read a field from a :class:`CodeTask` or a legacy mapping row.
+
+    Prefer this over ``getattr(...) or dict.get(...)``: :class:`CodeTask` has no
+    ``.get``, and fields such as ``starter_code`` may be ``""`` where ``or`` would
+    incorrectly fall through to dict-style access.
+    """
+    if isinstance(task, Mapping):
+        return task.get(name, default)
+    return getattr(task, name, default)
+
+
 def _coerce_tests(raw_tests: Any) -> List[List[Any]]:
     if not isinstance(raw_tests, list):
         raise ValueError("tests must be a list")

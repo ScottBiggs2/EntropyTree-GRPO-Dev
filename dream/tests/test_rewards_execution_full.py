@@ -45,6 +45,27 @@ def test_build_reward_function_dispatch():
     assert isinstance(reward, ExecutionShapedReward)
 
 
+def test_execution_shaped_reward_empty_starter_code_task_no_dict_get(tmp_path):
+    """Regression: AceCode rows can have starter_code=''; CodeTask has no .get."""
+    row = {
+        "task_id": "empty_starter",
+        "source": "test",
+        "split": "train",
+        "instruction": "Implement f that returns 0.",
+        "starter_code": "",
+        "entry_point": "f",
+        "tests": [[[], 0]],
+        "canonical_prompt": "acecode_empty_starter_prompt_fixture_xyz",
+    }
+    p = tmp_path / "empty_starter.jsonl"
+    p.write_text(json.dumps(row) + "\n")
+    task = load_code_tasks(p)[0]
+    assert task.starter_code == ""
+    reward = ExecutionShapedReward(registry_path=str(p), project_root=ROOT)
+    out = reward.score_components("def f():\n    return 0\n", task.canonical_prompt)
+    assert "exec_frac" in out and "reward" in out
+
+
 def test_execution_shaped_reward_assertion_format(tmp_path):
     row = {
         "task_id": "assert_add",

@@ -8,7 +8,7 @@ from typing import Dict, Optional
 
 from dream.src.execution_backends import ExecutionBackend, SubprocessBackend
 from dream.src.formatting import normalize_completion_for_reward
-from dream.src.task_registry import build_prompt_lookup, load_code_tasks
+from dream.src.task_registry import build_prompt_lookup, load_code_tasks, task_field
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _EXECUTION_PATH = _REPO_ROOT / "src" / "execution.py"
@@ -118,7 +118,7 @@ class _TaskBackedReward(RewardFunction):
         task = self._lookup_task(prompt)
         entry_point = None
         if task is not None:
-            entry_point = getattr(task, "entry_point", None) or task.get("entry_point")
+            entry_point = task_field(task, "entry_point", None)
         return normalize_completion_for_reward(completion, entry_point=entry_point)
 
 
@@ -155,12 +155,10 @@ class ExecutionReward(_TaskBackedReward):
         code = self._normalized_code(completion, prompt)
         if not code:
             return 0.0
-        starter_code = getattr(task, "starter_code", None) or task.get("starter_code", "")
-        func_name = getattr(task, "entry_point", None) or task.get("entry_point")
-        tests = getattr(task, "tests", None) or task.get("tests", [])
-        test_format = getattr(task, "test_format", None) or task.get(
-            "test_format", "args_expected"
-        )
+        starter_code = task_field(task, "starter_code", "") or ""
+        func_name = task_field(task, "entry_point", None)
+        tests = task_field(task, "tests", [])
+        test_format = task_field(task, "test_format", "args_expected")
         return self._run(code, starter_code, func_name, tests, test_format)
 
 
@@ -194,12 +192,10 @@ class ExecutionShapedReward(ExecutionReward):
         code = self._normalized_code(completion, prompt)
         if not code:
             return {"exec_frac": 0.0, "shaping_bonus": 0.0, "reward": 0.0}
-        starter_code = getattr(task, "starter_code", None) or task.get("starter_code", "")
-        func_name = getattr(task, "entry_point", None) or task.get("entry_point")
-        tests = getattr(task, "tests", None) or task.get("tests", [])
-        test_format = getattr(task, "test_format", None) or task.get(
-            "test_format", "args_expected"
-        )
+        starter_code = task_field(task, "starter_code", "") or ""
+        func_name = task_field(task, "entry_point", None)
+        tests = task_field(task, "tests", [])
+        test_format = task_field(task, "test_format", "args_expected")
         frac = float(self._run(code, starter_code, func_name, tests, test_format))
         if frac >= 1.0:
             return {"exec_frac": 1.0, "shaping_bonus": 0.0, "reward": 1.0}
