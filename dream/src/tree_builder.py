@@ -35,6 +35,7 @@ class EntropyGuidedTreeBuilder:
         self.mask_id = tokenizer.mask_token_id
         self.vocab_size = adapter.vocab_size
         self._entropy_diagnostic_logged = False
+        self._seq_diag_logged = False
         self.pad_id = (
             tokenizer.pad_token_id
             or tokenizer.eos_token_id
@@ -113,10 +114,12 @@ class EntropyGuidedTreeBuilder:
         else:
             ids = self.tokenizer.encode(prompt, add_special_tokens=True)
 
+        ids_before_cap = len(ids)
         max_prompt = int(getattr(self.config, "max_prompt_tokens", 0) or 0)
         if max_prompt > 0 and len(ids) > max_prompt:
             # Keep the most recent tokens; for chat templates this preserves the assistant prefix.
             ids = ids[-max_prompt:]
+        truncated = ids_before_cap > len(ids)
 
         prompt_len = len(ids)
         max_new = self.config.max_new_tokens
@@ -128,6 +131,16 @@ class EntropyGuidedTreeBuilder:
         state[:prompt_len] = torch.tensor(ids, device=self.device)
         state[prompt_len : prompt_len + max_new] = self.mask_id
         attn = torch.ones(total_len, device=self.device)
+
+        if not self._seq_diag_logged:
+            self._seq_diag_logged = True
+            cap_s = str(max_prompt) if max_prompt > 0 else "none"
+            print(
+                "[dream-seq] first root: "
+                f"prompt_tokens={prompt_len} (before_cap={ids_before_cap}) "
+                f"max_new={max_new} total_seq={total_len} max_prompt_cap={cap_s} "
+                f"truncated={truncated}"
+            )
 
         return MCTSNode(
             state=state,

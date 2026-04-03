@@ -22,6 +22,7 @@ from dream.src.model_adapter import ModelAdapter
 from dream.src.observability import tree_diversity_metrics
 from dream.src.tree_trace import build_tree_trace, write_tree_trace_json
 from dream.src.formatting import normalize_completion_for_reward
+from dream.src.gpu_diag import log_cuda_mem, print_cuda_oom_context
 
 
 RewardFn = Callable[[str, str], float]
@@ -358,6 +359,7 @@ class EntropyMCTSTrainer:
         self.vocab_size = self.adapter.vocab_size
         self._diag_count = 0
         self._trace_count = 0
+        self._first_train_step_diag = True
 
     def eval_step(self, prompt: str, *, step_id: int = 0, epoch: int = 0, prompt_idx: int = 0, phase: str = "initial_eval") -> Dict[str, float]:
         """Build tree and score completions; no backward / optimizer (initial baseline)."""
@@ -496,17 +498,49 @@ class EntropyMCTSTrainer:
             ):
                 torch.cuda.empty_cache()
 
+        dev = root.state.device
+        if self._first_train_step_diag:
+            sl = int(root.state.shape[0])
+            print(
+                "[dream-train] first step: "
+                f"seq_len={sl} prompt_len={root.prompt_len} "
+                f"tree_leaves={len(leaves)} max_tree_nodes={self.config.max_tree_nodes} "
+                f"loss_group_by_parent={getattr(self.config, 'loss_group_by_parent', True)}"
+            )
+            log_cuda_mem("after_tree_build_before_train", device=dev)
+
         self.model.train()
         per_trans = getattr(self.config, "loss_backward_per_transition", True)
         self.optimizer.zero_grad()
-        loss, loss_metrics = self.loss_computer.compute_loss(
-            self.model,
-            root,
-            leaves,
-            prompt,
-            self.vocab_size,
-            backward_per_transition=per_trans,
-        )
+        if self._first_train_step_diag:
+            log_cuda_mem("before_loss_compute_loss", device=dev)
+
+        try:
+            loss, loss_metrics = self.loss_computer.compute_loss(
+                self.model,
+                root,
+                leaves,
+                prompt,
+                self.vocab_size,
+                backward_per_transition=per_trans,
+            )
+        except torch.OutOfMemoryError:
+            print_cuda_oom_context(
+                device=dev,
+                extra_lines=[
+                    "[dream-train] CUDA OOM during compute_loss (training forward/backward).",
+                    f"seq_len={int(root.state.shape[0])} prompt_len={root.prompt_len} "
+                    f"tree_leaves={len(leaves)}",
+                    "Mitigations: lower max_prompt_tokens / max_new_tokens; "
+                    "try loss_group_by_parent=False; reduce max_tree_nodes. "
+                    "Export DREAM_OOM_DIAG=1 for verbose device logging.",
+                ],
+            )
+            raise
+        finally:
+            if self._first_train_step_diag:
+                self._first_train_step_diag = False
+
         if not per_trans:
             loss.backward()
         grad_norm = _grad_norm(p for p in self.model.parameters() if p.requires_grad)

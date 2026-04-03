@@ -11,6 +11,7 @@ from dream.src.tree_node import MCTSNode, TreeTransition
 from dream.src.entropy import EntropyComputer
 from dream.src.time_weight import TimeWeighter
 from dream.src.model_adapter import ModelAdapter
+from dream.src.gpu_diag import log_loss_diag_once
 
 
 class WeightedGRPOLoss:
@@ -80,6 +81,14 @@ class WeightedGRPOLoss:
 
         n = len(transitions)
         device = next(model.parameters()).device
+
+        log_loss_diag_once(
+            n_transitions=n,
+            n_parent_groups=len(self._parent_groups(transitions)),
+            first_parent_seq_len=int(transitions[0].parent_state.shape[0]),
+            group_by_parent=group_by_parent,
+            backward_per_transition=bool(backward_per_transition),
+        )
 
         sum_abs_adv = 0.0
         sum_w_time = 0.0

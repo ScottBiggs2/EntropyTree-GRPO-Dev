@@ -152,11 +152,19 @@ def _maybe_init_distributed(*, device: str) -> tuple[bool, int, int, int]:
     enabled, rank, local_rank, world_size = _dist_env()
     if not enabled:
         return False, 0, 0, 1
-    if device.startswith("cuda") and torch.cuda.is_available():
+    want_cuda = str(device).startswith("cuda")
+    if want_cuda and not torch.cuda.is_available():
+        raise RuntimeError(
+            "DDP/torchrun with --device cuda needs visible GPUs, but torch.cuda.is_available() is False. "
+            "Do not run multi-GPU training on a login node; request a GPU node first, e.g. "
+            "`srun --partition=gpu --gres=gpu:2 --pty bash` then rerun, or use `sbatch` with your multigpu job."
+        )
+    if want_cuda and torch.cuda.is_available():
         torch.cuda.set_device(local_rank)
-    torch.distributed.init_process_group(
-        backend="nccl" if device.startswith("cuda") else "gloo"
-    )
+        backend = "nccl"
+    else:
+        backend = "gloo"
+    torch.distributed.init_process_group(backend=backend)
     torch.distributed.barrier()
     return True, rank, local_rank, world_size
 
@@ -510,7 +518,11 @@ def main() -> int:
         f"[dream_cmp] adaptive_stepping={adaptive} branch_threshold={branch_threshold} "
         f"alpha_entropy={alpha_entropy} entropy_weight_min={args.entropy_weight_min}"
     )
-    print(f"[dream_cmp] total_denoising_steps={args.total_denoising_steps} max_new_tokens={args.max_new_tokens}")
+    print(
+        f"[dream_cmp] total_denoising_steps={args.total_denoising_steps} "
+        f"max_new_tokens={args.max_new_tokens} "
+        f"max_prompt_tokens={args.max_prompt_tokens} (0=no cap)"
+    )
     print(
         f"[dream_cmp] reward={args.reward} workload_source={workload['source']} "
         f"dataset_split={workload['dataset_split'] or 'n/a'}"
@@ -595,11 +607,14 @@ def main() -> int:
 
         ddp_model = None
         if ddp_enabled and train and str(cfg.device).startswith("cuda"):
+            # Tree-GRPO graphs differ by prompt; some LoRA params may be unused in a given
+            # backward. find_unused_parameters=False often raises DDP reduction errors on
+            # one rank (looks like random rank in torchrun logs).
             ddp_model = torch.nn.parallel.DistributedDataParallel(
                 model,
                 device_ids=[local_rank],
                 output_device=local_rank,
-                find_unused_parameters=False,
+                find_unused_parameters=True,
             )
             model_for_train = ddp_model
         else:

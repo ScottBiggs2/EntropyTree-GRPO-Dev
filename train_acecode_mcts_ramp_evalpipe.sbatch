@@ -13,8 +13,10 @@
 #   (one JSON line per checkpoint, easy to tail/ingest)
 #
 # Notes:
-# - This runs the tree phase only (baseline_train).
-# - Defaults are conservative for A100 80GB; adjust MAX_NEW_TOKENS / MAX_TREE_NODES upward cautiously.
+# - Default training phase is **adaptive_default** (entropy-threshold adaptive stepping).
+#   Set TRAIN_PHASE=baseline_train for fixed steps_per_expansion instead.
+# - Default tree/gen budgets are **OOM-light** (prompt cap + modest tree). With max_new_tokens=256,
+#   total_seq is larger — if OOM, lower MAX_PROMPT_TOKENS or MAX_TREE_NODES via env.
 
 #SBATCH --job-name=dream_acecode_mcts
 #SBATCH --output=logs/acecode_mcts_ramp_%j.out
@@ -24,7 +26,7 @@
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:a100:1
 #SBATCH --mem=128G
-#SBATCH --time=8:00:00
+#SBATCH --time=4:00:00
 
 set -euo pipefail
 
@@ -81,18 +83,25 @@ WANDB_GROUP="${WANDB_GROUP:-acecode_ramp_${JOB_ID}}"
 # Scale knobs (override via env before sbatch)
 MAX_TASKS="${MAX_TASKS:-512}"          # hundreds of tasks
 NUM_EPOCHS="${NUM_EPOCHS:-1}"          # start with 1 epoch; scale to 2+ once stable
+# adaptive_default | adaptive_alt_hp | baseline_train (fixed steps only)
+TRAIN_PHASE="${TRAIN_PHASE:-adaptive_default}"
 REWARD="${REWARD:-execution_shaped}"
 REWARD_TIMEOUT="${REWARD_TIMEOUT:-2.5}"
 REWARD_TIE_BREAKER="${REWARD_TIE_BREAKER:-none}"   # none|ast_size|code_len (optional)
 
-# Tree + generation budgets (OOM-sensitive)
-MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-192}"
+# Tree + generation budgets (OOM-sensitive; defaults tuned to avoid 80GB OOM on first step)
+MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-256}"
 TOTAL_DENOISING_STEPS="${TOTAL_DENOISING_STEPS:-128}"
-MAX_TREE_NODES="${MAX_TREE_NODES:-12}"
+MAX_TREE_NODES="${MAX_TREE_NODES:-8}"
 BRANCH_WIDTH="${BRANCH_WIDTH:-2}"
-STEPS_PER_EXPANSION="${STEPS_PER_EXPANSION:-8}"
+# Fixed-step only (baseline_train): ignored when TRAIN_PHASE is adaptive_*.
+STEPS_PER_EXPANSION="${STEPS_PER_EXPANSION:-12}"
+# Adaptive stepping: micro-steps per expansion (entropy stop between min and max).
+MIN_STEPS_PER_EXPANSION="${MIN_STEPS_PER_EXPANSION:-8}"
+MAX_STEPS_PER_EXPANSION="${MAX_STEPS_PER_EXPANSION:-36}"
+BRANCH_THRESHOLD="${BRANCH_THRESHOLD:-0.65}"
 # Cap prompt length (AceCode can contain very long starter_code stubs).
-MAX_PROMPT_TOKENS="${MAX_PROMPT_TOKENS:-2048}"
+MAX_PROMPT_TOKENS="${MAX_PROMPT_TOKENS:-1024}"
 
 # Training HP
 LEARNING_RATE="${LEARNING_RATE:-1e-6}"
@@ -115,8 +124,9 @@ mkdir -p "$OUT_DIR"
 ADAPTER_DIR="${OUT_DIR}/adapter"
 
 echo "======== acecode mcts ramp (evalpipe) ========"
-echo "dataset=$ACECODE_JSONL split=train max_tasks=$MAX_TASKS epochs=$NUM_EPOCHS"
-echo "tree: nodes=$MAX_TREE_NODES branch=$BRANCH_WIDTH steps_per_expansion=$STEPS_PER_EXPANSION"
+echo "phase=$TRAIN_PHASE dataset=$ACECODE_JSONL split=train max_tasks=$MAX_TASKS epochs=$NUM_EPOCHS"
+echo "tree: nodes=$MAX_TREE_NODES branch=$BRANCH_WIDTH steps_per_expansion=$STEPS_PER_EXPANSION (fixed only)"
+echo "adaptive: min_steps=$MIN_STEPS_PER_EXPANSION max_steps=$MAX_STEPS_PER_EXPANSION branch_threshold=$BRANCH_THRESHOLD"
 echo "gen: max_new_tokens=$MAX_NEW_TOKENS total_denoising_steps=$TOTAL_DENOISING_STEPS"
 echo "prompt cap: max_prompt_tokens=$MAX_PROMPT_TOKENS"
 echo "temps: temperature=$TEMPERATURE train_sampling_temperature=$TRAIN_SAMPLING_TEMPERATURE"
@@ -129,7 +139,7 @@ echo "{\"run_name\":\"${RUN_NAME}\",\"job_id\":\"${JOB_ID}\",\"event\":\"start\"
 
 set +e
 python dream/scripts/run_dream_comparison.py \
-  --phase baseline_train \
+  --phase "$TRAIN_PHASE" \
   --device cuda \
   --wandb_project "$WANDB_PROJECT" \
   --wandb_group "$WANDB_GROUP" \
@@ -147,6 +157,9 @@ python dream/scripts/run_dream_comparison.py \
   --max_tree_nodes "$MAX_TREE_NODES" \
   --branch_width "$BRANCH_WIDTH" \
   --steps_per_expansion "$STEPS_PER_EXPANSION" \
+  --min_steps_per_expansion "$MIN_STEPS_PER_EXPANSION" \
+  --max_steps_per_expansion "$MAX_STEPS_PER_EXPANSION" \
+  --branch_threshold "$BRANCH_THRESHOLD" \
   --max_new_tokens "$MAX_NEW_TOKENS" \
   --max-prompt-tokens "$MAX_PROMPT_TOKENS" \
   --total_denoising_steps "$TOTAL_DENOISING_STEPS" \
@@ -166,11 +179,11 @@ python dream/scripts/run_dream_comparison.py \
 RC=$?
 set -e
 
-if [ -f "${OUT_DIR}/baseline_train_final.pt" ]; then
-  echo "{\"run_name\":\"${RUN_NAME}\",\"job_id\":\"${JOB_ID}\",\"event\":\"final\",\"phase\":\"baseline_train\",\"path\":\"${OUT_DIR}/baseline_train_final.pt\",\"timestamp\":\"$(date -Is)\"}" >> "$MANIFEST"
+if [ -f "${OUT_DIR}/${TRAIN_PHASE}_final.pt" ]; then
+  echo "{\"run_name\":\"${RUN_NAME}\",\"job_id\":\"${JOB_ID}\",\"event\":\"final\",\"phase\":\"${TRAIN_PHASE}\",\"path\":\"${OUT_DIR}/${TRAIN_PHASE}_final.pt\",\"timestamp\":\"$(date -Is)\"}" >> "$MANIFEST"
 fi
 if [ -d "$ADAPTER_DIR" ]; then
-  echo "{\"run_name\":\"${RUN_NAME}\",\"job_id\":\"${JOB_ID}\",\"event\":\"adapter\",\"phase\":\"baseline_train\",\"path\":\"${ADAPTER_DIR}\",\"timestamp\":\"$(date -Is)\"}" >> "$MANIFEST"
+  echo "{\"run_name\":\"${RUN_NAME}\",\"job_id\":\"${JOB_ID}\",\"event\":\"adapter\",\"phase\":\"${TRAIN_PHASE}\",\"path\":\"${ADAPTER_DIR}\",\"timestamp\":\"$(date -Is)\"}" >> "$MANIFEST"
 fi
 
 echo "{\"run_name\":\"${RUN_NAME}\",\"job_id\":\"${JOB_ID}\",\"event\":\"end\",\"rc\":${RC},\"timestamp\":\"$(date -Is)\"}" >> "$MANIFEST"
