@@ -132,8 +132,21 @@ class BaselineGRPOTrainer:
         )
         self._diag_count = 0
 
-    def train_step(self, prompt: str) -> Dict[str, float]:
-        """Generate K completions, GRPO loss, one optimizer step."""
+    def train_step(
+        self,
+        prompt: str,
+        *,
+        step_id: int = 0,
+        epoch: int = 0,
+        prompt_idx: int = 0,
+        phase: str = "grpo_lora_baseline",
+    ) -> Dict[str, float]:
+        """Generate K completions, GRPO loss, one optimizer step.
+
+        Accepts the same optional kwargs as ``EntropyMCTSTrainer.train_step`` so
+        ``run_dream_comparison.py`` can pass step/epoch/prompt_idx/phase uniformly.
+        """
+        _ = (step_id, epoch, prompt_idx, phase)  # API parity; reserved for future tracing
         K = self.config.num_baseline_samples
         self.model.eval()
         trajectories = []
