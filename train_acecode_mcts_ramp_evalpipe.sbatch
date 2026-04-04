@@ -26,7 +26,7 @@
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:h200:1
 #SBATCH --mem=128G
-#SBATCH --time=4:00:00
+#SBATCH --time=6:00:00
 
 set -euo pipefail
 
