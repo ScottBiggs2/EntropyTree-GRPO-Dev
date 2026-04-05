@@ -152,4 +152,7 @@ PYTHONPATH=. python -m pytest tests/ -v
 
 ```bash
 sbatch --export=ALL,EVALPLUS_BACKEND=unsafe eval_base_dream_evalplus.sbatch
+
+sbatch --export=ALL,TRAIN_PHASE=grpo_lora_baseline,RUN_NAME="acecode_flat_lora_$(date +%Y%m%d_%H%M)",ACECODE_JSONL=/scratch/$USER/dream_data/acecode_hard_train.jsonl,MAX_TASKS=512,NUM_EPOCHS=1 \
+  train_acecode_mcts_ramp_evalpipe.sbatch
 ```

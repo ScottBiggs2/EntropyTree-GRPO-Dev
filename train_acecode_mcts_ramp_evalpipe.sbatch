@@ -11,6 +11,8 @@
 # - Final checkpoint under:     $CHECKPOINT_DIR/dream_comparison/$RUN_NAME/
 # - A manifest file:            $CHECKPOINT_DIR/dream_comparison/$RUN_NAME/checkpoints_manifest.jsonl
 #   (one JSON line per checkpoint, easy to tail/ingest)
+# - On success (LoRA adapter present): one dependent eval job runs **full** HumanEval+ & MBPP+
+#   pass@1 only (RUN_PASS10=0), all tasks (MAX_TASKS=0), EvalPlus scoring — see EVAL_OUT_BASE below.
 #
 # Notes:
 # - Default training phase is **adaptive_default** (entropy-threshold adaptive stepping).
@@ -26,7 +28,7 @@
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:h200:1
 #SBATCH --mem=128G
-#SBATCH --time=6:00:00
+#SBATCH --time=4:00:00
 
 set -euo pipefail
 
@@ -114,6 +116,14 @@ NUM_BASELINE_SAMPLES="${NUM_BASELINE_SAMPLES:-8}"
 # Checkpointing (final-only; critical for eval pipeline)
 CHECKPOINT_DIR="${CHECKPOINT_DIR:-/scratch/${USER}/entropy_tree_grpo_dream}"
 
+# Auto-eval (afterok on this job): full HumanEval+ & MBPP+ pass@1 + EvalPlus logs under EVAL_OUT_BASE (no pass@10)
+EVAL_OUT_BASE="${EVAL_OUT_BASE:-/scratch/${USER}/dream_eval/${RUN_NAME}}"
+# Wall time for chained eval (full pass@1 on HE+MBPP is still long; raise if needed)
+EVAL_WALLTIME="${EVAL_WALLTIME:-12:00:00}"
+SKIP_AUTO_EVAL="${SKIP_AUTO_EVAL:-0}"
+EVAL_MAX_NEW_TOKENS="${EVAL_MAX_NEW_TOKENS:-512}"
+EVAL_STEPS="${EVAL_STEPS:-128}"
+
 # Optional traces (off by default at scale)
 TRACE_EVERY_STEPS="${TRACE_EVERY_STEPS:-0}"
 TRACE_DIR="${TRACE_DIR:-traces}"
@@ -133,6 +143,7 @@ echo "temps: temperature=$TEMPERATURE train_sampling_temperature=$TRAIN_SAMPLING
 echo "reward=$REWARD timeout=$REWARD_TIMEOUT tie_breaker=$REWARD_TIE_BREAKER"
 echo "checkpoints: dir=$OUT_DIR final_only=1 manifest=$MANIFEST"
 echo "adapter_dir: $ADAPTER_DIR"
+echo "auto_eval: SKIP_AUTO_EVAL=$SKIP_AUTO_EVAL EVAL_OUT_BASE=$EVAL_OUT_BASE EVAL_WALLTIME=$EVAL_WALLTIME MAX_NEW_TOKENS=$EVAL_MAX_NEW_TOKENS STEPS=$EVAL_STEPS (full tasks, pass@1 only, EvalPlus)"
 
 # Create/append manifest header row (JSONL)
 echo "{\"run_name\":\"${RUN_NAME}\",\"job_id\":\"${JOB_ID}\",\"event\":\"start\",\"timestamp\":\"$(date -Is)\",\"out_dir\":\"${OUT_DIR}\"}" >> "$MANIFEST"
@@ -196,27 +207,25 @@ fi
 echo "Done. Checkpoints: $OUT_DIR"
 echo "Manifest: $MANIFEST"
 
-# --- Auto-schedule EvalPlus jobs on success ---
-# These eval scripts expect a PEFT adapter directory (saved by run_dream_comparison.py).
-# We schedule with dependency so they start after this job is OK.
-if [ -n "${SLURM_JOB_ID:-}" ] && [ "$RC" -eq 0 ] && [ -d "$ADAPTER_DIR" ]; then
-  EVAL_OUT_BASE="${EVAL_OUT_BASE:-/scratch/${USER}/dream_eval/${RUN_NAME}}"
+# --- Auto-schedule EvalPlus (full tasks, pass@1 only, scored) ---
+# eval_base_dream_evalplus.sbatch: MAX_TASKS=0 => all rows; RUN_PASS10=0 skips pass@10 section.
+# Artifacts: humaneval_pass1.jsonl, mbpp_pass1.jsonl, evalplus_*.log under OUT_BASE.
+if [ -n "${SLURM_JOB_ID:-}" ] && [ "$RC" -eq 0 ] && [ -d "$ADAPTER_DIR" ] && [ "${SKIP_AUTO_EVAL}" != "1" ]; then
   mkdir -p "$EVAL_OUT_BASE" || true
-  echo "Scheduling eval jobs with afterok dependency on ${SLURM_JOB_ID}"
-  echo "Eval outputs under: $EVAL_OUT_BASE"
+  echo "Scheduling EvalPlus job (pass@1 only, MAX_TASKS=0) afterok ${SLURM_JOB_ID}"
+  echo "Eval artifacts: $EVAL_OUT_BASE"
 
-  # pass@1 (fast)
-  sbatch --dependency="afterok:${SLURM_JOB_ID}" \
-    --export=ALL,ADAPTER="$ADAPTER_DIR",OUT_BASE="${EVAL_OUT_BASE}/pass1",RUN_PASS10=0 \
-    eval_base_dream_evalplus.sbatch
+  EVAL_EXPORT="ALL,ADAPTER=${ADAPTER_DIR},OUT_BASE=${EVAL_OUT_BASE},RUN_PASS10=0,MAX_TASKS=0,RUN_EVALPLUS=1"
+  EVAL_EXPORT="${EVAL_EXPORT},N_SAMPLES=1,MAX_NEW_TOKENS=${EVAL_MAX_NEW_TOKENS},STEPS=${EVAL_STEPS}"
 
-  # optional pass@10 (set RUN_PASS10=1 to enable in eval script)
-  if [ "${EVAL_RUN_PASS10:-0}" = "1" ]; then
-    sbatch --dependency="afterok:${SLURM_JOB_ID}" \
-      --export=ALL,ADAPTER="$ADAPTER_DIR",OUT_BASE="${EVAL_OUT_BASE}/pass10",RUN_PASS10=1 \
-      eval_base_dream_evalplus.sbatch
-  fi
+  SB_EVAL=$(sbatch --dependency="afterok:${SLURM_JOB_ID}" \
+    --time="${EVAL_WALLTIME}" \
+    --export="${EVAL_EXPORT}" \
+    eval_base_dream_evalplus.sbatch)
+  echo "$SB_EVAL"
+  EVAL_JID=$(echo "$SB_EVAL" | awk '{print $NF}')
+  echo "{\"run_name\":\"${RUN_NAME}\",\"job_id\":\"${JOB_ID}\",\"event\":\"eval_scheduled\",\"eval_job_id\":\"${EVAL_JID}\",\"eval_out_base\":\"${EVAL_OUT_BASE}\",\"timestamp\":\"$(date -Is)\"}" >> "$MANIFEST"
 else
-  echo "Skip auto-eval scheduling (rc=$RC, SLURM_JOB_ID=${SLURM_JOB_ID:-n/a}, adapter_dir_exists=$( [ -d "$ADAPTER_DIR" ] && echo 1 || echo 0 ))"
+  echo "Skip auto-eval (rc=$RC, SLURM_JOB_ID=${SLURM_JOB_ID:-n/a}, adapter_dir=$( [ -d "$ADAPTER_DIR" ] && echo 1 || echo 0 ), SKIP_AUTO_EVAL=${SKIP_AUTO_EVAL})"
 fi
 

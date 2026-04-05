@@ -8,6 +8,11 @@
 #   sbatch eval_base_dream_evalplus.sbatch
 #   sbatch --export=ALL,MAX_TASKS=8,N_SAMPLES=1 eval_base_dream_evalplus.sbatch   # quick subset
 #
+# train_acecode_mcts_ramp_evalpipe.sbatch (on success) submits one dependent job with:
+#   RUN_PASS10=0 MAX_TASKS=0 RUN_EVALPLUS=1 N_SAMPLES=1
+#   so HumanEval+ & MBPP+ run **all** tasks for pass@1 only (skips pass@10), with EvalPlus scoring;
+#   artifacts live under OUT_BASE (see bottom of this script).
+#
 # Override paths / phases (export before sbatch):
 #   HUMANEVAL_JSONL  default /scratch/$USER/dream_data/humaneval.jsonl
 #   MBPP_JSONL       default /scratch/$USER/dream_data/mbpp.jsonl
