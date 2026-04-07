@@ -18,7 +18,8 @@ The original MDLM stack in `src/` remains the reference baseline.
 
 - **Done for code GRPO bring-up**: `CodeTask` schema + loaders (`task_registry.py`), formatting/extraction (`formatting.py`), execution-first rewards (`rewards.py` + `build_reward_function`), dataset-aware `single_step_dream.py` and `run_dream_comparison.py`, diversity metrics (`observability.py`), sample data under `dream/data/`.
 - **Validated on GPU**: at least one **tree** single-step and one **flat** `grpo_lora_baseline` run with `--reward execution_shaped` and a JSONL dataset.
-- **Next**: AceCode-89K data ingestion, container sandbox, EvalPlus evaluation — see **`dream/STATUS.md`** and **`dream/PLAN_03_ENVIRONMENT_SCALEUP.md`**.
+- **Next**: AceCode-89K data ingestion, container sandbox — see **`dream/STATUS.md`** and **`dream/PLAN_03_ENVIRONMENT_SCALEUP.md`**.
+- **Eval (HumanEval+/MBPP+, optional GSM8K / BigCodeBench)**: **`dream/docs/EVAL_PROTOCOL.md`**, DiffuCoder parity table **`dream/docs/DIFFUCODER_EVAL_PARITY.md`**, Slurm driver **`eval_base_dream_evalplus.sbatch`** (standalone baseline; no training job required).
 
 ---
 

@@ -3,7 +3,7 @@
 **Project**: Entropy-Guided MCTS-GRPO for diffusion language models (Dream stack)  
 **Purpose**: Single reference for how we generate completions from a Dream checkpoint and score them with [EvalPlus](https://github.com/evalplus/evalplus), aligned with training (`dream/src/formatting.py`, `dream/src/task_registry.py`) and with DiffuCoder-style reporting.
 
-**Related**: `dream/PLAN_03_ENVIRONMENT_SCALEUP.md` (Step 4), `research_decisions.md` (D-011, D-024, **D-031** training vs DiffuCoder-eval prompt mismatch), `dream/scripts/validate_dream.py` (reference `diffusion_generate` usage), `dream/src/eval_prompts.py` (DiffuCoder Tables 5–6 templates for literature-aligned runs).
+**Related**: `dream/PLAN_03_ENVIRONMENT_SCALEUP.md` (Step 4), `research_decisions.md` (D-011, D-024, **D-031** training vs DiffuCoder-eval prompt mismatch), `dream/docs/DIFFUCODER_EVAL_PARITY.md` (paper Appendix B.2 vs our defaults), `dream/scripts/validate_dream.py` (reference `diffusion_generate` usage), `dream/src/eval_prompts.py` (DiffuCoder Tables 5–6 templates for literature-aligned runs).
 
 **Verification scope**: This protocol was **authored and reviewed against static code** (formatting, task registry, `validate_dream.py`) on a **typical laptop**, without loading Dream 7B or running full HumanEval+/MBPP+ EvalPlus jobs. Treat §10 as the checklist for **rigorous validation on the target GPU cluster** (e.g. Northeastern Explorer).
 
@@ -89,13 +89,13 @@ Tokenize with `tokenizer(full_prompt_string, return_tensors="pt", add_special_to
 
 Dream exposes **`model.diffusion_generate`** (not HuggingFace `generate` for the main diffusion path). Reference implementation: `dream/scripts/validate_dream.py`.
 
-Typical keyword arguments:
+Typical keyword arguments (see also `dream/docs/DIFFUCODER_EVAL_PARITY.md`):
 
 | Argument | Role | Default in `eval_humaneval.py` / `eval_mbpp.py` |
 |----------|------|--------------------------------------------------|
 | `max_new_tokens` | Max generated tokens (length cap) | **512** (CLI `--max-new-tokens`) |
-| `steps` | Diffusion denoising iterations | **32** (CLI `--steps`; independent of `max_new_tokens`) |
-| `temperature` | Sampling temperature | **0.2** for pass@1; **0.4** for pass@10 |
+| `steps` | Diffusion denoising iterations | **128** (CLI `--steps`; independent of `max_new_tokens`) |
+| `temperature` | Sampling temperature | **0.2** for pass@1; **0.4** for pass@10 (Slurm: `TEMP_PASS1` / `TEMP_PASS10`; scripts: `--temperature`) |
 | `top_p` | Nucleus sampling | **0.95** |
 | `alg` | Denoising schedule / algorithm flag | ** `"entropy"` ** |
 | `alg_temp` | Auxiliary temperature for `alg` | **0.0** |
@@ -110,7 +110,7 @@ with torch.no_grad():
         input_ids,
         attention_mask=attention_mask,
         max_new_tokens=512,  # length cap
-        steps=32,  # denoising steps (need not equal max_new_tokens)
+        steps=128,  # denoising steps (eval drivers default; validate_dream.py uses 128)
         temperature=0.2,
         top_p=0.95,
         alg="entropy",
@@ -124,7 +124,7 @@ text = tokenizer.decode(gen_ids, skip_special_tokens=True)
 
 **LoRA / PEFT**: If evaluating an adapter, load base weights + adapter per your training checkpoint convention and run the same call on the merged or wrapped model.
 
-**Training vs eval**: `dream/src/config.py` `MCTSConfig` uses `max_new_tokens=256` and `total_denoising_steps=256` for *tree training* — that couples length and steps for that stack. **Eval drivers** default to **`max_new_tokens=512`**, **`steps=32`** so the output budget and the diffusion depth are **CLI-configurable** and not forced to match. DiffuCoder’s paper reports **512** for both; override with `--max-new-tokens 512 --steps 512` if you need that exact protocol.
+**Training vs eval**: `dream/src/config.py` `MCTSConfig` uses `max_new_tokens=256` and `total_denoising_steps=256` for *tree training* — that couples length and steps for that stack. **Eval drivers** default to **`max_new_tokens=512`**, **`steps=128`** (CLI-configurable). The DiffuCoder paper (Appendix B.2) reports **512** max length and **512** diffusion steps for benchmark inference; use `--max-new-tokens 512 --steps 512` to match that protocol. The project often keeps **`steps=128`** for cost (see `DIFFUCODER_EVAL_PARITY.md`).
 
 ---
 
@@ -180,6 +180,17 @@ from evalplus.evaluate import evaluate
 
 EvalPlus can run tests in a sandbox. On clusters where Docker is unavailable or permissions are tight, you may need **`EVALPLUS_BACKEND=unsafe`** (or the flag your EvalPlus version documents). **Security**: `unsafe` runs code as the current user without container isolation — acceptable only on dedicated eval nodes with resource limits; document any use in run logs.
 
+### 6.5 `eval_run_manifest.json`
+
+Slurm driver `eval_base_dream_evalplus.sbatch` writes `eval_run_manifest.json` under `OUT_BASE` via `python -m dream.src.eval_manifest` (see `dream/src/eval_manifest.py`). It records model id, optional adapter path, key env flags, package versions, and git commit when available.
+
+---
+
+### 6.6 Optional benchmarks (BigCodeBench-Instruct & GSM8K)
+
+- **BigCodeBench**: `dream/scripts/eval_bigcodebench_generate.py` loads tasks with `bigcodebench.data.get_bigcodebench`, uses the **Table 6–style** fenced prompt via `build_mbpp_prompt`, then writes samples JSONL. Official scoring: `bigcodebench.evaluate --samples ...` (wrapped in `dream/src/eval_bigcodebench_runner.py`). Local execution may require BigCodeBench’s eval dependencies; use `--execution gradio` with a Space endpoint if needed.
+- **GSM8K**: `dream/scripts/eval_gsm8k.py` uses `diffusion_generate` with `apply_chat_template` (not identical to the paper’s lm-eval-harness path — see `DIFFUCODER_EVAL_PARITY.md`).
+
 ---
 
 ## 7. Reproducibility checklist
@@ -210,6 +221,10 @@ EvalPlus can run tests in a sandbox. On clusters where Docker is unavailable or 
 | Tasks | `dream/src/task_registry.py` — `CodeTask`, `load_code_tasks` |
 | Reference generation | `dream/scripts/validate_dream.py` |
 | Eval drivers | `dream/scripts/eval_humaneval.py`, `dream/scripts/eval_mbpp.py` |
+| Slurm eval batch | `eval_base_dream_evalplus.sbatch` (EvalPlus + optional GSM8K / BigCodeBench) |
+| Run manifest | `dream/src/eval_manifest.py` |
+| BigCodeBench generate | `dream/scripts/eval_bigcodebench_generate.py` |
+| GSM8K | `dream/scripts/eval_gsm8k.py` |
 
 Normative for **DiffuCoder-aligned** runs: §3.3, §4, §5, and `eval_generate.py`. Training-aligned smoke tests follow §3.1–§3.2.
 

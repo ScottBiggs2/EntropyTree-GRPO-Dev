@@ -107,6 +107,18 @@ NUM_BASELINE_SAMPLES="${NUM_BASELINE_SAMPLES:-8}"
 # Checkpointing (final-only; critical for eval pipeline)
 CHECKPOINT_DIR="${CHECKPOINT_DIR:-/scratch/${USER}/entropy_tree_grpo_dream}"
 
+# Chained eval (same contract as train_acecode_mcts_ramp_evalpipe.sbatch)
+EVAL_OUT_BASE="${EVAL_OUT_BASE:-/scratch/${USER}/dream_eval/${RUN_NAME}}"
+EVAL_WALLTIME="${EVAL_WALLTIME:-12:00:00}"
+SKIP_AUTO_EVAL="${SKIP_AUTO_EVAL:-0}"
+EVAL_MAX_NEW_TOKENS="${EVAL_MAX_NEW_TOKENS:-512}"
+EVAL_STEPS="${EVAL_STEPS:-128}"
+EVAL_MODEL="${EVAL_MODEL:-Dream-org/Dream-v0-Instruct-7B}"
+RUN_GSM8K="${RUN_GSM8K:-1}"
+RUN_BIGCODEBENCH="${RUN_BIGCODEBENCH:-1}"
+BCB_SUBSET="${BCB_SUBSET:-hard}"
+GSM8K_MAX_TASKS="${GSM8K_MAX_TASKS:-0}"
+
 # Optional traces (off by default at scale)
 TRACE_EVERY_STEPS="${TRACE_EVERY_STEPS:-0}"
 TRACE_DIR="${TRACE_DIR:-traces}"
@@ -187,23 +199,27 @@ fi
 echo "Done. Checkpoints: $OUT_DIR"
 echo "Manifest: $MANIFEST"
 
-# --- Auto-schedule EvalPlus jobs on success ---
-if [ -n "${SLURM_JOB_ID:-}" ] && [ "$RC" -eq 0 ] && [ -d "$ADAPTER_DIR" ]; then
-  EVAL_OUT_BASE="${EVAL_OUT_BASE:-/scratch/${USER}/dream_eval/${RUN_NAME}}"
+# --- Auto-schedule eval on success (adapter optional) ---
+if [ -n "${SLURM_JOB_ID:-}" ] && [ "$RC" -eq 0 ] && [ "${SKIP_AUTO_EVAL}" != "1" ]; then
   mkdir -p "$EVAL_OUT_BASE" || true
-  echo "Scheduling eval jobs with afterok dependency on ${SLURM_JOB_ID}"
+  echo "Scheduling eval job with afterok dependency on ${SLURM_JOB_ID}"
   echo "Eval outputs under: $EVAL_OUT_BASE"
 
-  sbatch --dependency="afterok:${SLURM_JOB_ID}" \
-    --export=ALL,ADAPTER="$ADAPTER_DIR",OUT_BASE="${EVAL_OUT_BASE}/pass1",RUN_PASS10=0 \
-    eval_base_dream_evalplus.sbatch
-
-  if [ "${EVAL_RUN_PASS10:-0}" = "1" ]; then
-    sbatch --dependency="afterok:${SLURM_JOB_ID}" \
-      --export=ALL,ADAPTER="$ADAPTER_DIR",OUT_BASE="${EVAL_OUT_BASE}/pass10",RUN_PASS10=1 \
-      eval_base_dream_evalplus.sbatch
+  EVAL_EXPORT="ALL,OUT_BASE=${EVAL_OUT_BASE},RUN_PASS10=${EVAL_RUN_PASS10:-0},MAX_TASKS=0,RUN_EVALPLUS=1"
+  EVAL_EXPORT="${EVAL_EXPORT},N_SAMPLES=1,MAX_NEW_TOKENS=${EVAL_MAX_NEW_TOKENS},STEPS=${EVAL_STEPS}"
+  EVAL_EXPORT="${EVAL_EXPORT},MODEL=${EVAL_MODEL}"
+  EVAL_EXPORT="${EVAL_EXPORT},RUN_GSM8K=${RUN_GSM8K},RUN_BIGCODEBENCH=${RUN_BIGCODEBENCH},BCB_SUBSET=${BCB_SUBSET},GSM8K_MAX_TASKS=${GSM8K_MAX_TASKS}"
+  if [ -d "$ADAPTER_DIR" ]; then
+    EVAL_EXPORT="${EVAL_EXPORT},ADAPTER=${ADAPTER_DIR}"
+  else
+    echo "WARN: no LoRA adapter at $ADAPTER_DIR — eval runs base MODEL only (${EVAL_MODEL})"
   fi
+
+  sbatch --dependency="afterok:${SLURM_JOB_ID}" \
+    --time="${EVAL_WALLTIME}" \
+    --export="${EVAL_EXPORT}" \
+    eval_base_dream_evalplus.sbatch
 else
-  echo "Skip auto-eval scheduling (rc=$RC, SLURM_JOB_ID=${SLURM_JOB_ID:-n/a}, adapter_dir_exists=$( [ -d "$ADAPTER_DIR" ] && echo 1 || echo 0 ))"
+  echo "Skip auto-eval scheduling (rc=$RC, SLURM_JOB_ID=${SLURM_JOB_ID:-n/a}, SKIP_AUTO_EVAL=${SKIP_AUTO_EVAL})"
 fi
 

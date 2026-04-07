@@ -11,8 +11,10 @@
 # - Final checkpoint under:     $CHECKPOINT_DIR/dream_comparison/$RUN_NAME/
 # - A manifest file:            $CHECKPOINT_DIR/dream_comparison/$RUN_NAME/checkpoints_manifest.jsonl
 #   (one JSON line per checkpoint, easy to tail/ingest)
-# - On success (LoRA adapter present): one dependent eval job runs **full** HumanEval+ & MBPP+
-#   pass@1 only (RUN_PASS10=0), all tasks (MAX_TASKS=0), EvalPlus scoring — see EVAL_OUT_BASE below.
+# - On training success: one dependent eval job runs **full** HumanEval+ & MBPP+ pass@1 (EvalPlus),
+#   optional GSM8K + BigCodeBench-Instruct (hard) — see `SKIP_AUTO_EVAL`, `RUN_GSM8K`, `RUN_BIGCODEBENCH`.
+#   Eval does **not** require a LoRA adapter: if `adapter/` is missing, the eval job still runs with
+#   base `EVAL_MODEL` only (useful for baseline smoke). If `adapter/` exists, `--adapter` is passed.
 #
 # Notes:
 # - Default training phase is **adaptive_default** (entropy-threshold adaptive stepping).
@@ -123,6 +125,13 @@ EVAL_WALLTIME="${EVAL_WALLTIME:-12:00:00}"
 SKIP_AUTO_EVAL="${SKIP_AUTO_EVAL:-0}"
 EVAL_MAX_NEW_TOKENS="${EVAL_MAX_NEW_TOKENS:-512}"
 EVAL_STEPS="${EVAL_STEPS:-128}"
+# Base HF model id for the chained eval job (LoRA stacks on top when ADAPTER is set)
+EVAL_MODEL="${EVAL_MODEL:-Dream-org/Dream-v0-Instruct-7B}"
+# Chained eval: optional extra metrics (pass@1); can be heavy — override with RUN_GSM8K=0 etc.
+RUN_GSM8K="${RUN_GSM8K:-1}"
+RUN_BIGCODEBENCH="${RUN_BIGCODEBENCH:-1}"
+BCB_SUBSET="${BCB_SUBSET:-hard}"
+GSM8K_MAX_TASKS="${GSM8K_MAX_TASKS:-0}"
 
 # Optional traces (off by default at scale)
 TRACE_EVERY_STEPS="${TRACE_EVERY_STEPS:-0}"
@@ -143,7 +152,7 @@ echo "temps: temperature=$TEMPERATURE train_sampling_temperature=$TRAIN_SAMPLING
 echo "reward=$REWARD timeout=$REWARD_TIMEOUT tie_breaker=$REWARD_TIE_BREAKER"
 echo "checkpoints: dir=$OUT_DIR final_only=1 manifest=$MANIFEST"
 echo "adapter_dir: $ADAPTER_DIR"
-echo "auto_eval: SKIP_AUTO_EVAL=$SKIP_AUTO_EVAL EVAL_OUT_BASE=$EVAL_OUT_BASE EVAL_WALLTIME=$EVAL_WALLTIME MAX_NEW_TOKENS=$EVAL_MAX_NEW_TOKENS STEPS=$EVAL_STEPS (full tasks, pass@1 only, EvalPlus)"
+echo "auto_eval: SKIP_AUTO_EVAL=$SKIP_AUTO_EVAL EVAL_OUT_BASE=$EVAL_OUT_BASE EVAL_WALLTIME=$EVAL_WALLTIME MODEL=$EVAL_MODEL MAX_NEW_TOKENS=$EVAL_MAX_NEW_TOKENS STEPS=$EVAL_STEPS RUN_GSM8K=$RUN_GSM8K RUN_BIGCODEBENCH=$RUN_BIGCODEBENCH BCB_SUBSET=$BCB_SUBSET"
 
 # Create/append manifest header row (JSONL)
 echo "{\"run_name\":\"${RUN_NAME}\",\"job_id\":\"${JOB_ID}\",\"event\":\"start\",\"timestamp\":\"$(date -Is)\",\"out_dir\":\"${OUT_DIR}\"}" >> "$MANIFEST"
@@ -207,16 +216,23 @@ fi
 echo "Done. Checkpoints: $OUT_DIR"
 echo "Manifest: $MANIFEST"
 
-# --- Auto-schedule EvalPlus (full tasks, pass@1 only, scored) ---
-# eval_base_dream_evalplus.sbatch: MAX_TASKS=0 => all rows; RUN_PASS10=0 skips pass@10 section.
-# Artifacts: humaneval_pass1.jsonl, mbpp_pass1.jsonl, evalplus_*.log under OUT_BASE.
-if [ -n "${SLURM_JOB_ID:-}" ] && [ "$RC" -eq 0 ] && [ -d "$ADAPTER_DIR" ] && [ "${SKIP_AUTO_EVAL}" != "1" ]; then
+# --- Auto-schedule eval (full HumanEval+/MBPP+ pass@1, optional GSM8K + BigCodeBench) ---
+# eval_base_dream_evalplus.sbatch: MAX_TASKS=0 => all rows; RUN_PASS10=0 skips pass@10 (use standalone eval for pass@10).
+if [ -n "${SLURM_JOB_ID:-}" ] && [ "$RC" -eq 0 ] && [ "${SKIP_AUTO_EVAL}" != "1" ]; then
   mkdir -p "$EVAL_OUT_BASE" || true
-  echo "Scheduling EvalPlus job (pass@1 only, MAX_TASKS=0) afterok ${SLURM_JOB_ID}"
+  echo "Scheduling eval job afterok ${SLURM_JOB_ID}"
   echo "Eval artifacts: $EVAL_OUT_BASE"
 
-  EVAL_EXPORT="ALL,ADAPTER=${ADAPTER_DIR},OUT_BASE=${EVAL_OUT_BASE},RUN_PASS10=0,MAX_TASKS=0,RUN_EVALPLUS=1"
+  EVAL_EXPORT="ALL,OUT_BASE=${EVAL_OUT_BASE},RUN_PASS10=0,MAX_TASKS=0,RUN_EVALPLUS=1"
   EVAL_EXPORT="${EVAL_EXPORT},N_SAMPLES=1,MAX_NEW_TOKENS=${EVAL_MAX_NEW_TOKENS},STEPS=${EVAL_STEPS}"
+  EVAL_EXPORT="${EVAL_EXPORT},MODEL=${EVAL_MODEL}"
+  EVAL_EXPORT="${EVAL_EXPORT},RUN_GSM8K=${RUN_GSM8K},RUN_BIGCODEBENCH=${RUN_BIGCODEBENCH},BCB_SUBSET=${BCB_SUBSET},GSM8K_MAX_TASKS=${GSM8K_MAX_TASKS}"
+  if [ -d "$ADAPTER_DIR" ]; then
+    EVAL_EXPORT="${EVAL_EXPORT},ADAPTER=${ADAPTER_DIR}"
+    echo "Chained eval will use adapter: $ADAPTER_DIR"
+  else
+    echo "WARN: no LoRA adapter at $ADAPTER_DIR — eval runs base MODEL only (${EVAL_MODEL})"
+  fi
 
   SB_EVAL=$(sbatch --dependency="afterok:${SLURM_JOB_ID}" \
     --time="${EVAL_WALLTIME}" \
@@ -224,8 +240,8 @@ if [ -n "${SLURM_JOB_ID:-}" ] && [ "$RC" -eq 0 ] && [ -d "$ADAPTER_DIR" ] && [ "
     eval_base_dream_evalplus.sbatch)
   echo "$SB_EVAL"
   EVAL_JID=$(echo "$SB_EVAL" | awk '{print $NF}')
-  echo "{\"run_name\":\"${RUN_NAME}\",\"job_id\":\"${JOB_ID}\",\"event\":\"eval_scheduled\",\"eval_job_id\":\"${EVAL_JID}\",\"eval_out_base\":\"${EVAL_OUT_BASE}\",\"timestamp\":\"$(date -Is)\"}" >> "$MANIFEST"
+  echo "{\"run_name\":\"${RUN_NAME}\",\"job_id\":\"${JOB_ID}\",\"event\":\"eval_scheduled\",\"eval_job_id\":\"${EVAL_JID}\",\"eval_out_base\":\"${EVAL_OUT_BASE}\",\"adapter_used\":$( [ -d "$ADAPTER_DIR" ] && echo true || echo false ),\"timestamp\":\"$(date -Is)\"}" >> "$MANIFEST"
 else
-  echo "Skip auto-eval (rc=$RC, SLURM_JOB_ID=${SLURM_JOB_ID:-n/a}, adapter_dir=$( [ -d "$ADAPTER_DIR" ] && echo 1 || echo 0 ), SKIP_AUTO_EVAL=${SKIP_AUTO_EVAL})"
+  echo "Skip auto-eval (rc=$RC, SLURM_JOB_ID=${SLURM_JOB_ID:-n/a}, SKIP_AUTO_EVAL=${SKIP_AUTO_EVAL})"
 fi
 

@@ -153,6 +153,13 @@ PYTHONPATH=. python -m pytest tests/ -v
 ```bash
 sbatch --export=ALL,EVALPLUS_BACKEND=unsafe eval_base_dream_evalplus.sbatch
 
+sbatch --export=ALL,TRAIN_PHASE=adaptive_default,RUN_NAME="acecode_et_adaptive_default$(date +%Y%m%d_%H%M)",ACECODE_JSONL=/scratch/$USER/dream_data/acecode_hard_train.jsonl,MAX_TASKS=512,NUM_EPOCHS=1 \
+    train_acecode_mcts_ramp_evalpipe.sbatch
+
 sbatch --export=ALL,TRAIN_PHASE=grpo_lora_baseline,RUN_NAME="acecode_flat_lora_$(date +%Y%m%d_%H%M)",ACECODE_JSONL=/scratch/$USER/dream_data/acecode_hard_train.jsonl,MAX_TASKS=512,NUM_EPOCHS=1 \
-  train_acecode_mcts_ramp_evalpipe.sbatch
+    train_acecode_mcts_ramp_evalpipe.sbatch
+
+sbatch --time=3:00:00 \
+--export=ALL,OUT_BASE=/scratch/${USER}/dream_eval/dream_base_pass1,RUN_PASS10=0,MAX_TASKS=0,RUN_EVALPLUS=1,N_SAMPLES=1,MAX_NEW_TOKENS=512,STEPS=128,MODEL=apple/DiffuCoder-7B-cpGRPO \
+    eval_base_dream_evalplus.sbatch
 ```
