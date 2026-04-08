@@ -106,7 +106,7 @@ MIN_STEPS_PER_EXPANSION="${MIN_STEPS_PER_EXPANSION:-8}"
 MAX_STEPS_PER_EXPANSION="${MAX_STEPS_PER_EXPANSION:-36}"
 BRANCH_THRESHOLD="${BRANCH_THRESHOLD:-0.65}"
 # Cap prompt length (AceCode can contain very long starter_code stubs).
-MAX_PROMPT_TOKENS="${MAX_PROMPT_TOKENS:-1024}"
+MAX_PROMPT_TOKENS="${MAX_PROMPT_TOKENS:-768}"
 
 # Training HP
 LEARNING_RATE="${LEARNING_RATE:-1e-6}"
@@ -122,7 +122,7 @@ CHECKPOINT_DIR="${CHECKPOINT_DIR:-/scratch/${USER}/entropy_tree_grpo_dream}"
 # Auto-eval (afterok on this job): full HumanEval+ & MBPP+ pass@1 + EvalPlus logs under EVAL_OUT_BASE (no pass@10)
 EVAL_OUT_BASE="${EVAL_OUT_BASE:-/scratch/${USER}/dream_eval/${RUN_NAME}}"
 # Wall time for chained eval (full pass@1 on HE+MBPP is still long; raise if needed)
-# Added BigCodeBench and GSM8K as well as 512/512 for parity w/ DiffuCoder
+# Added BigCodeBench and GSM8K as well as 256/512 - NOT the 512/512 parity w/ DiffuCoder (yet)
 EVAL_WALLTIME="${EVAL_WALLTIME:-8:00:00}"
 SKIP_AUTO_EVAL="${SKIP_AUTO_EVAL:-0}"
 EVAL_MAX_NEW_TOKENS="${EVAL_MAX_NEW_TOKENS:-512}"
