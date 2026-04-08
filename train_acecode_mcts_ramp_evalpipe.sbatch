@@ -94,8 +94,9 @@ REWARD_TIMEOUT="${REWARD_TIMEOUT:-2.5}"
 REWARD_TIE_BREAKER="${REWARD_TIE_BREAKER:-none}"   # none|ast_size|code_len (optional)
 
 # Tree + generation budgets (OOM-sensitive; defaults tuned to avoid 80GB OOM on first step)
-MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-256}"
-TOTAL_DENOISING_STEPS="${TOTAL_DENOISING_STEPS:-128}"
+# I believe this is parity with Apple DiffuCoder
+MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-512}"
+TOTAL_DENOISING_STEPS="${TOTAL_DENOISING_STEPS:-256}"
 MAX_TREE_NODES="${MAX_TREE_NODES:-8}"
 BRANCH_WIDTH="${BRANCH_WIDTH:-2}"
 # Fixed-step only (baseline_train): ignored when TRAIN_PHASE is adaptive_*.
@@ -121,17 +122,18 @@ CHECKPOINT_DIR="${CHECKPOINT_DIR:-/scratch/${USER}/entropy_tree_grpo_dream}"
 # Auto-eval (afterok on this job): full HumanEval+ & MBPP+ pass@1 + EvalPlus logs under EVAL_OUT_BASE (no pass@10)
 EVAL_OUT_BASE="${EVAL_OUT_BASE:-/scratch/${USER}/dream_eval/${RUN_NAME}}"
 # Wall time for chained eval (full pass@1 on HE+MBPP is still long; raise if needed)
-EVAL_WALLTIME="${EVAL_WALLTIME:-12:00:00}"
+# Added BigCodeBench and GSM8K as well as 512/512 for parity w/ DiffuCoder
+EVAL_WALLTIME="${EVAL_WALLTIME:-8:00:00}"
 SKIP_AUTO_EVAL="${SKIP_AUTO_EVAL:-0}"
 EVAL_MAX_NEW_TOKENS="${EVAL_MAX_NEW_TOKENS:-512}"
-EVAL_STEPS="${EVAL_STEPS:-128}"
+EVAL_STEPS="${EVAL_STEPS:-256}"
 # Base HF model id for the chained eval job (LoRA stacks on top when ADAPTER is set)
 EVAL_MODEL="${EVAL_MODEL:-Dream-org/Dream-v0-Instruct-7B}"
 # Chained eval: optional extra metrics (pass@1); can be heavy — override with RUN_GSM8K=0 etc.
 RUN_GSM8K="${RUN_GSM8K:-1}"
 RUN_BIGCODEBENCH="${RUN_BIGCODEBENCH:-1}"
 BCB_SUBSET="${BCB_SUBSET:-hard}"
-GSM8K_MAX_TASKS="${GSM8K_MAX_TASKS:-0}"
+GSM8K_MAX_TASKS="${GSM8K_MAX_TASKS:-256}"
 
 # Optional traces (off by default at scale)
 TRACE_EVERY_STEPS="${TRACE_EVERY_STEPS:-0}"
@@ -216,31 +218,47 @@ fi
 echo "Done. Checkpoints: $OUT_DIR"
 echo "Manifest: $MANIFEST"
 
-# --- Auto-schedule eval (full HumanEval+/MBPP+ pass@1, optional GSM8K + BigCodeBench) ---
-# eval_base_dream_evalplus.sbatch: MAX_TASKS=0 => all rows; RUN_PASS10=0 skips pass@10 (use standalone eval for pass@10).
+# --- Auto-schedule eval (Parallelized: EvalPlus set & Expanded set) ---
 if [ -n "${SLURM_JOB_ID:-}" ] && [ "$RC" -eq 0 ] && [ "${SKIP_AUTO_EVAL}" != "1" ]; then
   mkdir -p "$EVAL_OUT_BASE" || true
-  echo "Scheduling eval job afterok ${SLURM_JOB_ID}"
+  echo "Scheduling parallel eval jobs afterok ${SLURM_JOB_ID}"
   echo "Eval artifacts: $EVAL_OUT_BASE"
 
-  EVAL_EXPORT="ALL,OUT_BASE=${EVAL_OUT_BASE},RUN_PASS10=0,MAX_TASKS=0,RUN_EVALPLUS=1"
-  EVAL_EXPORT="${EVAL_EXPORT},N_SAMPLES=1,MAX_NEW_TOKENS=${EVAL_MAX_NEW_TOKENS},STEPS=${EVAL_STEPS}"
-  EVAL_EXPORT="${EVAL_EXPORT},MODEL=${EVAL_MODEL}"
-  EVAL_EXPORT="${EVAL_EXPORT},RUN_GSM8K=${RUN_GSM8K},RUN_BIGCODEBENCH=${RUN_BIGCODEBENCH},BCB_SUBSET=${BCB_SUBSET},GSM8K_MAX_TASKS=${GSM8K_MAX_TASKS}"
+  ADAPTER_ARG=""
   if [ -d "$ADAPTER_DIR" ]; then
-    EVAL_EXPORT="${EVAL_EXPORT},ADAPTER=${ADAPTER_DIR}"
-    echo "Chained eval will use adapter: $ADAPTER_DIR"
-  else
-    echo "WARN: no LoRA adapter at $ADAPTER_DIR — eval runs base MODEL only (${EVAL_MODEL})"
+    ADAPTER_ARG=",ADAPTER=${ADAPTER_DIR}"
   fi
 
-  SB_EVAL=$(sbatch --dependency="afterok:${SLURM_JOB_ID}" \
+  # 1. HumanEval+ & MBPP+
+  EVAL_SET_EXPORT="ALL,OUT_BASE=${EVAL_OUT_BASE}/evalplus,RUN_PASS10=0,MAX_TASKS=0,RUN_EVALPLUS=1"
+  EVAL_SET_EXPORT="${EVAL_SET_EXPORT},N_SAMPLES=1,MAX_NEW_TOKENS=${EVAL_MAX_NEW_TOKENS},STEPS=${EVAL_STEPS}"
+  EVAL_SET_EXPORT="${EVAL_SET_EXPORT},MODEL=${EVAL_MODEL},RUN_HUMANEVAL=1,RUN_MBPP=1,RUN_GSM8K=0,RUN_BIGCODEBENCH=0${ADAPTER_ARG}"
+
+  SB_EVAL_SET=$(sbatch --dependency="afterok:${SLURM_JOB_ID}" \
     --time="${EVAL_WALLTIME}" \
-    --export="${EVAL_EXPORT}" \
+    --export="${EVAL_SET_EXPORT}" \
+    --job-name="eval_plus_${RUN_NAME}" \
     eval_base_dream_evalplus.sbatch)
-  echo "$SB_EVAL"
-  EVAL_JID=$(echo "$SB_EVAL" | awk '{print $NF}')
-  echo "{\"run_name\":\"${RUN_NAME}\",\"job_id\":\"${JOB_ID}\",\"event\":\"eval_scheduled\",\"eval_job_id\":\"${EVAL_JID}\",\"eval_out_base\":\"${EVAL_OUT_BASE}\",\"adapter_used\":$( [ -d "$ADAPTER_DIR" ] && echo true || echo false ),\"timestamp\":\"$(date -Is)\"}" >> "$MANIFEST"
+
+  # 2. BigCodeBench-Hard & GSM8K
+  EXPANDED_SET_EXPORT="ALL,OUT_BASE=${EVAL_OUT_BASE}/expanded,RUN_PASS10=0,MAX_TASKS=0,RUN_EVALPLUS=1"
+  EXPANDED_SET_EXPORT="${EXPANDED_SET_EXPORT},N_SAMPLES=1,MAX_NEW_TOKENS=${EVAL_MAX_NEW_TOKENS},STEPS=${EVAL_STEPS}"
+  EXPANDED_SET_EXPORT="${EXPANDED_SET_EXPORT},MODEL=${EVAL_MODEL},RUN_HUMANEVAL=0,RUN_MBPP=0"
+  EXPANDED_SET_EXPORT="${EXPANDED_SET_EXPORT},RUN_GSM8K=${RUN_GSM8K},RUN_BIGCODEBENCH=${RUN_BIGCODEBENCH},BCB_SUBSET=${BCB_SUBSET},GSM8K_MAX_TASKS=${GSM8K_MAX_TASKS}${ADAPTER_ARG}"
+
+  SB_EXPANDED_SET=$(sbatch --dependency="afterok:${SLURM_JOB_ID}" \
+    --time="${EVAL_WALLTIME}" \
+    --export="${EXPANDED_SET_EXPORT}" \
+    --job-name="eval_expanded_${RUN_NAME}" \
+    eval_base_dream_evalplus.sbatch)
+
+  echo "$SB_EVAL_SET"
+  echo "$SB_EXPANDED_SET"
+  
+  EVAL_JID1=$(echo "$SB_EVAL_SET" | awk '{print $NF}')
+  EVAL_JID2=$(echo "$SB_EXPANDED_SET" | awk '{print $NF}')
+  
+  echo "{\"run_name\":\"${RUN_NAME}\",\"job_id\":\"${JOB_ID}\",\"event\":\"eval_scheduled\",\"evalplus_job_id\":\"${EVAL_JID1}\",\"expanded_job_id\":\"${EVAL_JID2}\",\"eval_out_base\":\"${EVAL_OUT_BASE}\",\"timestamp\":\"$(date -Is)\"}" >> "$MANIFEST"
 else
   echo "Skip auto-eval (rc=$RC, SLURM_JOB_ID=${SLURM_JOB_ID:-n/a}, SKIP_AUTO_EVAL=${SKIP_AUTO_EVAL})"
 fi
