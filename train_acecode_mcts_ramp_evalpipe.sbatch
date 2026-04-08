@@ -30,7 +30,7 @@
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:h200:1
 #SBATCH --mem=128G
-#SBATCH --time=4:00:00
+#SBATCH --time=8:00:00
 
 set -euo pipefail
 
@@ -85,7 +85,7 @@ WANDB_PROJECT="${WANDB_PROJECT:-entropy-tree-grpo-dream}"
 WANDB_GROUP="${WANDB_GROUP:-acecode_ramp_${JOB_ID}}"
 
 # Scale knobs (override via env before sbatch)
-MAX_TASKS="${MAX_TASKS:-512}"          # hundreds of tasks
+MAX_TASKS="${MAX_TASKS:-1024}"          # hundreds of tasks
 NUM_EPOCHS="${NUM_EPOCHS:-1}"          # start with 1 epoch; scale to 2+ once stable
 # adaptive_default | adaptive_alt_hp | baseline_train (fixed steps only)
 TRAIN_PHASE="${TRAIN_PHASE:-adaptive_default}"
