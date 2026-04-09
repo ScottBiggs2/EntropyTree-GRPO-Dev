@@ -11,3 +11,4 @@ pytest
 datasets>=2.16.0
 evalplus>=0.3.1
 bigcodebench>=0.2.0
+matplotlib>=3.6.0
