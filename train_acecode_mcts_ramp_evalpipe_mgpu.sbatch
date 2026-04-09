@@ -82,19 +82,28 @@ WANDB_PROJECT="${WANDB_PROJECT:-entropy-tree-grpo-dream}"
 WANDB_GROUP="${WANDB_GROUP:-acecode_ramp_${JOB_ID}}"
 
 # Scale knobs (override via env before sbatch)
-MAX_TASKS="${MAX_TASKS:-512}"
-NUM_EPOCHS="${NUM_EPOCHS:-1}"
+MAX_TASKS="${MAX_TASKS:-1024}"          # hundreds of tasks
+NUM_EPOCHS="${NUM_EPOCHS:-1}"          # start with 1 epoch; scale to 2+ once stable
+# adaptive_default | adaptive_alt_hp | baseline_train (fixed steps only)
+TRAIN_PHASE="${TRAIN_PHASE:-adaptive_default}"
 REWARD="${REWARD:-execution_shaped}"
 REWARD_TIMEOUT="${REWARD_TIMEOUT:-2.5}"
-REWARD_TIE_BREAKER="${REWARD_TIE_BREAKER:-none}"
+REWARD_TIE_BREAKER="${REWARD_TIE_BREAKER:-none}"   # none|ast_size|code_len (optional)
 
-# Tree + generation budgets (OOM-sensitive)
-MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-192}"
-TOTAL_DENOISING_STEPS="${TOTAL_DENOISING_STEPS:-128}"
-MAX_TREE_NODES="${MAX_TREE_NODES:-12}"
+# Tree + generation budgets (OOM-sensitive; defaults tuned to avoid 80GB OOM on first step)
+# I believe this is parity with Apple DiffuCoder
+MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-512}"
+TOTAL_DENOISING_STEPS="${TOTAL_DENOISING_STEPS:-256}"
+MAX_TREE_NODES="${MAX_TREE_NODES:-8}"
 BRANCH_WIDTH="${BRANCH_WIDTH:-2}"
-STEPS_PER_EXPANSION="${STEPS_PER_EXPANSION:-8}"
-MAX_PROMPT_TOKENS="${MAX_PROMPT_TOKENS:-2048}"
+# Fixed-step only (baseline_train): ignored when TRAIN_PHASE is adaptive_*.
+STEPS_PER_EXPANSION="${STEPS_PER_EXPANSION:-12}"
+# Adaptive stepping: micro-steps per expansion (entropy stop between min and max).
+MIN_STEPS_PER_EXPANSION="${MIN_STEPS_PER_EXPANSION:-8}"
+MAX_STEPS_PER_EXPANSION="${MAX_STEPS_PER_EXPANSION:-36}"
+BRANCH_THRESHOLD="${BRANCH_THRESHOLD:-0.65}"
+# Cap prompt length (AceCode can contain very long starter_code stubs).
+MAX_PROMPT_TOKENS="${MAX_PROMPT_TOKENS:-768}"
 
 # Training HP
 LEARNING_RATE="${LEARNING_RATE:-1e-6}"
@@ -109,15 +118,19 @@ CHECKPOINT_DIR="${CHECKPOINT_DIR:-/scratch/${USER}/entropy_tree_grpo_dream}"
 
 # Chained eval (same contract as train_acecode_mcts_ramp_evalpipe.sbatch)
 EVAL_OUT_BASE="${EVAL_OUT_BASE:-/scratch/${USER}/dream_eval/${RUN_NAME}}"
-EVAL_WALLTIME="${EVAL_WALLTIME:-12:00:00}"
+# Wall time for chained eval (full pass@1 on HE+MBPP is still long; raise if needed)
+# Added BigCodeBench and GSM8K as well as 256/512 - NOT the 512/512 parity w/ DiffuCoder (yet)
+EVAL_WALLTIME="${EVAL_WALLTIME:-8:00:00}"
 SKIP_AUTO_EVAL="${SKIP_AUTO_EVAL:-0}"
 EVAL_MAX_NEW_TOKENS="${EVAL_MAX_NEW_TOKENS:-512}"
-EVAL_STEPS="${EVAL_STEPS:-128}"
+EVAL_STEPS="${EVAL_STEPS:-256}"
+# Base HF model id for the chained eval job (LoRA stacks on top when ADAPTER is set)
 EVAL_MODEL="${EVAL_MODEL:-Dream-org/Dream-v0-Instruct-7B}"
+# Chained eval: optional extra metrics (pass@1); can be heavy — override with RUN_GSM8K=0 etc.
 RUN_GSM8K="${RUN_GSM8K:-1}"
 RUN_BIGCODEBENCH="${RUN_BIGCODEBENCH:-1}"
 BCB_SUBSET="${BCB_SUBSET:-hard}"
-GSM8K_MAX_TASKS="${GSM8K_MAX_TASKS:-0}"
+GSM8K_MAX_TASKS="${GSM8K_MAX_TASKS:-256}"
 
 # Optional traces (off by default at scale)
 TRACE_EVERY_STEPS="${TRACE_EVERY_STEPS:-0}"
@@ -129,8 +142,9 @@ mkdir -p "$OUT_DIR"
 ADAPTER_DIR="${OUT_DIR}/adapter"
 
 echo "======== acecode mcts ramp (mgpu evalpipe) ========"
-echo "dataset=$ACECODE_JSONL split=train max_tasks=$MAX_TASKS epochs=$NUM_EPOCHS"
-echo "tree: nodes=$MAX_TREE_NODES branch=$BRANCH_WIDTH steps_per_expansion=$STEPS_PER_EXPANSION"
+echo "phase=$TRAIN_PHASE dataset=$ACECODE_JSONL split=train max_tasks=$MAX_TASKS epochs=$NUM_EPOCHS"
+echo "tree: nodes=$MAX_TREE_NODES branch=$BRANCH_WIDTH steps_per_expansion=$STEPS_PER_EXPANSION (fixed only)"
+echo "adaptive: min_steps=$MIN_STEPS_PER_EXPANSION max_steps=$MAX_STEPS_PER_EXPANSION branch_threshold=$BRANCH_THRESHOLD"
 echo "gen: max_new_tokens=$MAX_NEW_TOKENS total_denoising_steps=$TOTAL_DENOISING_STEPS"
 echo "prompt cap: max_prompt_tokens=$MAX_PROMPT_TOKENS"
 echo "temps: temperature=$TEMPERATURE train_sampling_temperature=$TRAIN_SAMPLING_TEMPERATURE"
@@ -145,9 +159,9 @@ NPROC="${SLURM_GPUS_ON_NODE:-4}"
 set +e
 torchrun --standalone --nnodes=1 --nproc_per_node="$NPROC" \
   dream/scripts/run_dream_comparison.py \
-  --phase baseline_train \
+  --phase "$TRAIN_PHASE" \
   --device cuda \
-  --wandb_project "$WANDB_PROJECT" \
+  --wandb_project "$WANDB_project" \
   --wandb_group "$WANDB_GROUP" \
   --run_name "$RUN_NAME" \
   --dataset "$ACECODE_JSONL" \
@@ -163,6 +177,9 @@ torchrun --standalone --nnodes=1 --nproc_per_node="$NPROC" \
   --max_tree_nodes "$MAX_TREE_NODES" \
   --branch_width "$BRANCH_WIDTH" \
   --steps_per_expansion "$STEPS_PER_EXPANSION" \
+  --min_steps_per_expansion "$MIN_STEPS_PER_EXPANSION" \
+  --max_steps_per_expansion "$MAX_STEPS_PER_EXPANSION" \
+  --branch_threshold "$BRANCH_THRESHOLD" \
   --max_new_tokens "$MAX_NEW_TOKENS" \
   --max-prompt-tokens "$MAX_PROMPT_TOKENS" \
   --total_denoising_steps "$TOTAL_DENOISING_STEPS" \
@@ -182,11 +199,11 @@ torchrun --standalone --nnodes=1 --nproc_per_node="$NPROC" \
 RC=$?
 set -e
 
-if [ -f "${OUT_DIR}/baseline_train_final.pt" ]; then
-  echo "{\"run_name\":\"${RUN_NAME}\",\"job_id\":\"${JOB_ID}\",\"event\":\"final\",\"phase\":\"baseline_train\",\"path\":\"${OUT_DIR}/baseline_train_final.pt\",\"timestamp\":\"$(date -Is)\"}" >> "$MANIFEST"
+if [ -f "${OUT_DIR}/${TRAIN_PHASE}_final.pt" ]; then
+  echo "{\"run_name\":\"${RUN_NAME}\",\"job_id\":\"${JOB_ID}\",\"event\":\"final\",\"phase\":\"${TRAIN_PHASE}\",\"path\":\"${OUT_DIR}/${TRAIN_PHASE}_final.pt\",\"timestamp\":\"$(date -Is)\"}" >> "$MANIFEST"
 fi
 if [ -d "$ADAPTER_DIR" ]; then
-  echo "{\"run_name\":\"${RUN_NAME}\",\"job_id\":\"${JOB_ID}\",\"event\":\"adapter\",\"phase\":\"baseline_train\",\"path\":\"${ADAPTER_DIR}\",\"timestamp\":\"$(date -Is)\"}" >> "$MANIFEST"
+  echo "{\"run_name\":\"${RUN_NAME}\",\"job_id\":\"${JOB_ID}\",\"event\":\"adapter\",\"phase\":\"${TRAIN_PHASE}\",\"path\":\"${ADAPTER_DIR}\",\"timestamp\":\"$(date -Is)\"}" >> "$MANIFEST"
 fi
 
 echo "{\"run_name\":\"${RUN_NAME}\",\"job_id\":\"${JOB_ID}\",\"event\":\"end\",\"rc\":${RC},\"timestamp\":\"$(date -Is)\"}" >> "$MANIFEST"
@@ -199,26 +216,47 @@ fi
 echo "Done. Checkpoints: $OUT_DIR"
 echo "Manifest: $MANIFEST"
 
-# --- Auto-schedule eval on success (adapter optional) ---
+# --- Auto-schedule eval (Parallelized: EvalPlus set & Expanded set) ---
 if [ -n "${SLURM_JOB_ID:-}" ] && [ "$RC" -eq 0 ] && [ "${SKIP_AUTO_EVAL}" != "1" ]; then
   mkdir -p "$EVAL_OUT_BASE" || true
-  echo "Scheduling eval job with afterok dependency on ${SLURM_JOB_ID}"
-  echo "Eval outputs under: $EVAL_OUT_BASE"
+  echo "Scheduling parallel eval jobs afterok ${SLURM_JOB_ID}"
+  echo "Eval artifacts: $EVAL_OUT_BASE"
 
-  EVAL_EXPORT="ALL,OUT_BASE=${EVAL_OUT_BASE},RUN_PASS10=${EVAL_RUN_PASS10:-0},MAX_TASKS=0,RUN_EVALPLUS=1"
-  EVAL_EXPORT="${EVAL_EXPORT},N_SAMPLES=1,MAX_NEW_TOKENS=${EVAL_MAX_NEW_TOKENS},STEPS=${EVAL_STEPS}"
-  EVAL_EXPORT="${EVAL_EXPORT},MODEL=${EVAL_MODEL}"
-  EVAL_EXPORT="${EVAL_EXPORT},RUN_GSM8K=${RUN_GSM8K},RUN_BIGCODEBENCH=${RUN_BIGCODEBENCH},BCB_SUBSET=${BCB_SUBSET},GSM8K_MAX_TASKS=${GSM8K_MAX_TASKS}"
+  ADAPTER_ARG=""
   if [ -d "$ADAPTER_DIR" ]; then
-    EVAL_EXPORT="${EVAL_EXPORT},ADAPTER=${ADAPTER_DIR}"
-  else
-    echo "WARN: no LoRA adapter at $ADAPTER_DIR — eval runs base MODEL only (${EVAL_MODEL})"
+    ADAPTER_ARG=",ADAPTER=${ADAPTER_DIR}"
   fi
 
-  sbatch --dependency="afterok:${SLURM_JOB_ID}" \
+  # 1. HumanEval+ & MBPP+
+  EVAL_SET_EXPORT="ALL,OUT_BASE=${EVAL_OUT_BASE}/evalplus,RUN_PASS10=0,MAX_TASKS=0,RUN_EVALPLUS=1"
+  EVAL_SET_EXPORT="${EVAL_SET_EXPORT},N_SAMPLES=1,MAX_NEW_TOKENS=${EVAL_MAX_NEW_TOKENS},STEPS=${EVAL_STEPS}"
+  EVAL_SET_EXPORT="${EVAL_SET_EXPORT},MODEL=${EVAL_MODEL},RUN_HUMANEVAL=1,RUN_MBPP=1,RUN_GSM8K=0,RUN_BIGCODEBENCH=0${ADAPTER_ARG}"
+
+  SB_EVAL_SET=$(sbatch --dependency="afterok:${SLURM_JOB_ID}" \
     --time="${EVAL_WALLTIME}" \
-    --export="${EVAL_EXPORT}" \
-    eval_base_dream_evalplus.sbatch
+    --export="${EVAL_SET_EXPORT}" \
+    --job-name="eval_plus_${RUN_NAME}" \
+    eval_base_dream_evalplus.sbatch)
+
+  # 2. BigCodeBench-Hard & GSM8K
+  EXPANDED_SET_EXPORT="ALL,OUT_BASE=${EVAL_OUT_BASE}/expanded,RUN_PASS10=0,MAX_TASKS=0,RUN_EVALPLUS=1"
+  EXPANDED_SET_EXPORT="${EXPANDED_SET_EXPORT},N_SAMPLES=1,MAX_NEW_TOKENS=${EVAL_MAX_NEW_TOKENS},STEPS=${EVAL_STEPS}"
+  EXPANDED_SET_EXPORT="${EXPANDED_SET_EXPORT},MODEL=${EVAL_MODEL},RUN_HUMANEVAL=0,RUN_MBPP=0"
+  EXPANDED_SET_EXPORT="${EXPANDED_SET_EXPORT},RUN_GSM8K=${RUN_GSM8K},RUN_BIGCODEBENCH=${RUN_BIGCODEBENCH},BCB_SUBSET=${BCB_SUBSET},GSM8K_MAX_TASKS=${GSM8K_MAX_TASKS}${ADAPTER_ARG}"
+
+  SB_EXPANDED_SET=$(sbatch --dependency="afterok:${SLURM_JOB_ID}" \
+    --time="${EVAL_WALLTIME}" \
+    --export="${EXPANDED_SET_EXPORT}" \
+    --job-name="eval_expanded_${RUN_NAME}" \
+    eval_base_dream_evalplus.sbatch)
+
+  echo "$SB_EVAL_SET"
+  echo "$SB_EXPANDED_SET"
+  
+  EVAL_JID1=$(echo "$SB_EVAL_SET" | awk '{print $NF}')
+  EVAL_JID2=$(echo "$SB_EXPANDED_SET" | awk '{print $NF}')
+  
+  echo "{\"run_name\":\"${RUN_NAME}\",\"job_id\":\"${JOB_ID}\",\"event\":\"eval_scheduled\",\"evalplus_job_id\":\"${EVAL_JID1}\",\"expanded_job_id\":\"${EVAL_JID2}\",\"eval_out_base\":\"${EVAL_OUT_BASE}\",\"timestamp\":\"$(date -Is)\"}" >> "$MANIFEST"
 else
   echo "Skip auto-eval scheduling (rc=$RC, SLURM_JOB_ID=${SLURM_JOB_ID:-n/a}, SKIP_AUTO_EVAL=${SKIP_AUTO_EVAL})"
 fi

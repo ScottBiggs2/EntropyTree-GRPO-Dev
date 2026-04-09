@@ -378,6 +378,12 @@ def main() -> int:
         help=f"Root directory for dream_comparison/<run_name>/ (default: {DEFAULT_CHECKPOINT_ROOT}).",
     )
     p.add_argument(
+        "--resume-from",
+        type=str,
+        default="",
+        help="Path to .pt checkpoint to resume training from.",
+    )
+    p.add_argument(
         "--save-every-steps",
         "--save_every_steps",
         type=int,
@@ -669,15 +675,42 @@ def main() -> int:
             "cfg_max_tasks": float(args.max_tasks),
         }
 
+        global_step = 0
+        resume_path = getattr(args, "resume_from", None)
+        if resume_path and os.path.isfile(resume_path):
+            ckpt = torch.load(resume_path, map_location="cpu", weights_only=False)
+            if "model" in ckpt:
+                if ddp_model is not None:
+                    ddp_model.module.load_state_dict(ckpt["model"], strict=False)
+                else:
+                    model.load_state_dict(ckpt["model"], strict=False)
+            if "optimizer" in ckpt:
+                optimizer.load_state_dict(ckpt["optimizer"])
+            if "step" in ckpt:
+                global_step = ckpt["step"]
+                if scheduler is not None and hasattr(scheduler, "step"):
+                    for _ in range(global_step):
+                        scheduler.step()
+            if not ddp_enabled or is_rank0:
+                print(f"[dream_cmp] Resumed from {resume_path} at step {global_step}")
+
+        start_epoch = 0
+        start_prompt_idx = 0
+        if train and global_step > 0 and len(prompts) > 0:
+            start_epoch = global_step // len(prompts)
+            start_prompt_idx = global_step % len(prompts)
+
         t_run0 = time.perf_counter()
 
-        for epoch in range(max(1, epochs) if train else 1):
+        for epoch in range(start_epoch if train else 0, max(1, epochs) if train else 1):
             if not train and epoch > 0:
                 break
             t_ep = time.perf_counter()
             epoch_means: Dict[str, float] = {}
             n_prompts = 0
             for pi, prompt in enumerate(prompts):
+                if train and epoch == start_epoch and pi < start_prompt_idx:
+                    continue
                 t_step0 = time.perf_counter()
                 if train:
                     metrics = trainer.train_step(

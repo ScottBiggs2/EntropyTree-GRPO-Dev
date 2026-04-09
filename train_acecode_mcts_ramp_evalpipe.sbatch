@@ -84,6 +84,10 @@ RUN_NAME="${RUN_NAME:-acecode_mcts_ramp_${JOB_ID}}"
 WANDB_PROJECT="${WANDB_PROJECT:-entropy-tree-grpo-dream}"
 WANDB_GROUP="${WANDB_GROUP:-acecode_ramp_${JOB_ID}}"
 
+# Model config
+BASE_MODEL="${BASE_MODEL:-Dream-org/Dream-v0-Instruct-7B}"
+RESUME_FROM="${RESUME_FROM:-}"
+
 # Scale knobs (override via env before sbatch)
 MAX_TASKS="${MAX_TASKS:-1024}"          # hundreds of tasks
 NUM_EPOCHS="${NUM_EPOCHS:-1}"          # start with 1 epoch; scale to 2+ once stable
@@ -106,7 +110,7 @@ MIN_STEPS_PER_EXPANSION="${MIN_STEPS_PER_EXPANSION:-8}"
 MAX_STEPS_PER_EXPANSION="${MAX_STEPS_PER_EXPANSION:-36}"
 BRANCH_THRESHOLD="${BRANCH_THRESHOLD:-0.65}"
 # Cap prompt length (AceCode can contain very long starter_code stubs).
-MAX_PROMPT_TOKENS="${MAX_PROMPT_TOKENS:-768}"
+MAX_PROMPT_TOKENS="${MAX_PROMPT_TOKENS:-512}"
 
 # Training HP
 LEARNING_RATE="${LEARNING_RATE:-1e-6}"
@@ -128,7 +132,7 @@ SKIP_AUTO_EVAL="${SKIP_AUTO_EVAL:-0}"
 EVAL_MAX_NEW_TOKENS="${EVAL_MAX_NEW_TOKENS:-512}"
 EVAL_STEPS="${EVAL_STEPS:-256}"
 # Base HF model id for the chained eval job (LoRA stacks on top when ADAPTER is set)
-EVAL_MODEL="${EVAL_MODEL:-Dream-org/Dream-v0-Instruct-7B}"
+EVAL_MODEL="${EVAL_MODEL:-$BASE_MODEL}"
 # Chained eval: optional extra metrics (pass@1); can be heavy — override with RUN_GSM8K=0 etc.
 RUN_GSM8K="${RUN_GSM8K:-1}"
 RUN_BIGCODEBENCH="${RUN_BIGCODEBENCH:-1}"
@@ -152,15 +156,22 @@ echo "gen: max_new_tokens=$MAX_NEW_TOKENS total_denoising_steps=$TOTAL_DENOISING
 echo "prompt cap: max_prompt_tokens=$MAX_PROMPT_TOKENS"
 echo "temps: temperature=$TEMPERATURE train_sampling_temperature=$TRAIN_SAMPLING_TEMPERATURE"
 echo "reward=$REWARD timeout=$REWARD_TIMEOUT tie_breaker=$REWARD_TIE_BREAKER"
-echo "checkpoints: dir=$OUT_DIR final_only=1 manifest=$MANIFEST"
+echo "checkpoints: dir=$OUT_DIR final_only=1 manifest=$MANIFEST resume_from=$RESUME_FROM"
 echo "adapter_dir: $ADAPTER_DIR"
 echo "auto_eval: SKIP_AUTO_EVAL=$SKIP_AUTO_EVAL EVAL_OUT_BASE=$EVAL_OUT_BASE EVAL_WALLTIME=$EVAL_WALLTIME MODEL=$EVAL_MODEL MAX_NEW_TOKENS=$EVAL_MAX_NEW_TOKENS STEPS=$EVAL_STEPS RUN_GSM8K=$RUN_GSM8K RUN_BIGCODEBENCH=$RUN_BIGCODEBENCH BCB_SUBSET=$BCB_SUBSET"
 
 # Create/append manifest header row (JSONL)
 echo "{\"run_name\":\"${RUN_NAME}\",\"job_id\":\"${JOB_ID}\",\"event\":\"start\",\"timestamp\":\"$(date -Is)\",\"out_dir\":\"${OUT_DIR}\"}" >> "$MANIFEST"
 
+RESUME_ARG=""
+if [ -n "$RESUME_FROM" ]; then
+  RESUME_ARG="--resume-from $RESUME_FROM"
+fi
+
 set +e
 python dream/scripts/run_dream_comparison.py \
+  --model "$BASE_MODEL" \
+  ${RESUME_ARG} \
   --phase "$TRAIN_PHASE" \
   --device cuda \
   --wandb_project "$WANDB_PROJECT" \
