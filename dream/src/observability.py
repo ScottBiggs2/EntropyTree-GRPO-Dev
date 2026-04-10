@@ -173,6 +173,12 @@ def tree_diversity_metrics(root: MCTSNode, leaves: Iterable[MCTSNode]) -> Dict[s
     mean_overlap, mean_agreement = _sibling_overlap_metrics(root)
 
     n = max(len(leaves), 1)
+    
+    edge_steps_mean = sum(steps_in_edge) / len(steps_in_edge) if steps_in_edge else 0.0
+    edge_steps_min = float(min(steps_in_edge)) if steps_in_edge else 0.0
+    edge_steps_max = float(max(steps_in_edge)) if steps_in_edge else 0.0
+    edge_steps_std = (sum((x - edge_steps_mean)**2 for x in steps_in_edge) / len(steps_in_edge))**0.5 if steps_in_edge else 0.0
+
     return {
         "leaf_text_unique_frac": len(set(leaf_tokens)) / n,
         "leaf_path_unique_frac": len(set(path_sigs)) / n,
@@ -182,4 +188,8 @@ def tree_diversity_metrics(root: MCTSNode, leaves: Iterable[MCTSNode]) -> Dict[s
         "mean_sibling_position_overlap": mean_overlap,
         "mean_sibling_token_agreement": mean_agreement,
         "unique_steps_in_edge_count": float(len(set(steps_in_edge))) if steps_in_edge else 0.0,
+        "edge_steps_mean": float(edge_steps_mean),
+        "edge_steps_min": edge_steps_min,
+        "edge_steps_max": edge_steps_max,
+        "edge_steps_std": float(edge_steps_std),
     }

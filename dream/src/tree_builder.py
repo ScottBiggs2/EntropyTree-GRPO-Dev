@@ -11,6 +11,8 @@ import math
 import torch
 import torch.nn.functional as F
 
+from typing import List, Tuple, Optional
+
 from dream.src.config import MCTSConfig
 from dream.src.tree_node import MCTSNode
 from dream.src.entropy import EntropyComputer
@@ -188,9 +190,8 @@ class EntropyGuidedTreeBuilder:
         across sibling branches.
         """
         children: List[MCTSNode] = []
-        base_temp = self._node_temperature(node)
         train_temp = getattr(self.config, "train_sampling_temperature", 0.0)
-        temp = train_temp if train_temp > 0 else base_temp
+        temp = self._node_temperature(node, base_temp_override=train_temp)
         for _ in range(self.config.branch_width):
             if self.config.adaptive_stepping:
                 child = self._denoise_chunk_adaptive(
@@ -209,9 +210,9 @@ class EntropyGuidedTreeBuilder:
             children.append(child)
         return children
 
-    def _node_temperature(self, node: MCTSNode) -> float:
+    def _node_temperature(self, node: MCTSNode, base_temp_override: Optional[float] = None) -> float:
         """Adaptive temperature: higher entropy → slightly higher temperature."""
-        base_temp = self.config.temperature
+        base_temp = base_temp_override if base_temp_override is not None and base_temp_override > 0.0 else self.config.temperature
         if node.entropy is None:
             return base_temp
         masking_ratio = node.masking_ratio()
@@ -222,7 +223,7 @@ class EntropyGuidedTreeBuilder:
             return base_temp
         uncertainty_ratio = float(node.entropy) / float(expected_h)
         ratio_clamped = min(uncertainty_ratio, 1.0)
-        return base_temp * (0.8 + 0.3 * ratio_clamped)
+        return base_temp * (0.7 + 0.6 * ratio_clamped)
 
     def _denoise_chunk(
         self, node: MCTSNode, num_steps: int, temperature: float

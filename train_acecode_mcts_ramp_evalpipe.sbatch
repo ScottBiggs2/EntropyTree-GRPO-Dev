@@ -106,8 +106,8 @@ BRANCH_WIDTH="${BRANCH_WIDTH:-2}"
 # Fixed-step only (baseline_train): ignored when TRAIN_PHASE is adaptive_*.
 STEPS_PER_EXPANSION="${STEPS_PER_EXPANSION:-12}"
 # Adaptive stepping: micro-steps per expansion (entropy stop between min and max).
-MIN_STEPS_PER_EXPANSION="${MIN_STEPS_PER_EXPANSION:-8}"
-MAX_STEPS_PER_EXPANSION="${MAX_STEPS_PER_EXPANSION:-36}"
+MIN_STEPS_PER_EXPANSION="${MIN_STEPS_PER_EXPANSION:-4}"
+MAX_STEPS_PER_EXPANSION="${MAX_STEPS_PER_EXPANSION:-48}"
 BRANCH_THRESHOLD="${BRANCH_THRESHOLD:-0.65}"
 # Cap prompt length (AceCode can contain very long starter_code stubs).
 MAX_PROMPT_TOKENS="${MAX_PROMPT_TOKENS:-512}"
