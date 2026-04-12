@@ -66,18 +66,24 @@ class AdvantageComputer:
     ) -> None:
         """Path-weighted reward fusion, then depth-wise z-score normalization."""
         AdvantageComputer._fuse_rewards_path_weighted(root)
+        
+        # Singleton fallback (C4): compute global mean across all terminal rewards.
+        leaf_rewards = [leaf.reward for leaf in leaves if leaf.reward is not None]
+        global_mean = float(np.mean(leaf_rewards)) if leaf_rewards else 0.0
+        
         nodes_by_depth: Dict[int, List[MCTSNode]] = {}
         AdvantageComputer._collect_by_depth(root, nodes_by_depth, 0)
         for depth, nodes in nodes_by_depth.items():
             fused = [n.fused_reward for n in nodes if n.fused_reward is not None]
             if not fused:
                 continue
-            # If there are fewer than 2 nodes at this depth, normalization is unstable;
-            # set advantages to 0.0 so they neither explode nor dominate learning.
+            # If there are fewer than 2 nodes at this depth, use global mean fallback (C4).
+            # This ensures the root and other singletons produce a valid gradient signal.
             if len(fused) < 2:
                 for n in nodes:
                     if n.fused_reward is not None:
-                        n.advantage = 0.0
+                        a_val = n.fused_reward - global_mean
+                        n.advantage = float(np.clip(a_val, -advantage_clip, advantage_clip))
                 continue
             mean_d = float(np.mean(fused))
             std_d = float(np.std(fused)) + 1e-6

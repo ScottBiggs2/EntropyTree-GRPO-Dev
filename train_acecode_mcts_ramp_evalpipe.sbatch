@@ -118,6 +118,8 @@ ENTROPY_WEIGHT_MIN="${ENTROPY_WEIGHT_MIN:-0.08}"
 ENTROPY_WEIGHT_MAX="${ENTROPY_WEIGHT_MAX:-2.5}"
 TEMPERATURE="${TEMPERATURE:-0.2}"
 TRAIN_SAMPLING_TEMPERATURE="${TRAIN_SAMPLING_TEMPERATURE:-0.9}"
+TRAIN_COMPLETION_TEMPERATURE="${TRAIN_COMPLETION_TEMPERATURE:-0.0}"
+LOGITS_RIGHT_SHIFT="${LOGITS_RIGHT_SHIFT:-1}"
 NUM_BASELINE_SAMPLES="${NUM_BASELINE_SAMPLES:-8}"
 
 # Checkpointing (final-only; critical for eval pipeline)
@@ -155,7 +157,8 @@ echo "tree: nodes=$MAX_TREE_NODES branch=$BRANCH_WIDTH steps_per_expansion=$STEP
 echo "adaptive: min_steps=$MIN_STEPS_PER_EXPANSION max_steps=$MAX_STEPS_PER_EXPANSION branch_threshold=$BRANCH_THRESHOLD"
 echo "gen: max_new_tokens=$MAX_NEW_TOKENS total_denoising_steps=$TOTAL_DENOISING_STEPS"
 echo "prompt cap: max_prompt_tokens=$MAX_PROMPT_TOKENS"
-echo "temps: temperature=$TEMPERATURE train_sampling_temperature=$TRAIN_SAMPLING_TEMPERATURE"
+echo "temps: temperature=$TEMPERATURE train_sampling_temperature=$TRAIN_SAMPLING_TEMPERATURE train_completion_temperature=$TRAIN_COMPLETION_TEMPERATURE"
+echo "logits_right_shift: $LOGITS_RIGHT_SHIFT"
 echo "reward=$REWARD timeout=$REWARD_TIMEOUT tie_breaker=$REWARD_TIE_BREAKER"
 echo "checkpoints: dir=$OUT_DIR final_only=1 manifest=$MANIFEST resume_from=$RESUME_FROM"
 echo "adapter_dir: $ADAPTER_DIR"
@@ -167,6 +170,11 @@ echo "{\"run_name\":\"${RUN_NAME}\",\"job_id\":\"${JOB_ID}\",\"event\":\"start\"
 RESUME_ARG=""
 if [ -n "$RESUME_FROM" ]; then
   RESUME_ARG="--resume-from $RESUME_FROM"
+fi
+
+SHIFT_ARG="--logits-right-shift"
+if [ "$LOGITS_RIGHT_SHIFT" -eq 0 ]; then
+  SHIFT_ARG="--no-logits-right-shift"
 fi
 
 set +e
@@ -203,6 +211,8 @@ python dream/scripts/run_dream_comparison.py \
   --num-baseline-samples "$NUM_BASELINE_SAMPLES" \
   --temperature "$TEMPERATURE" \
   --train-sampling-temperature "$TRAIN_SAMPLING_TEMPERATURE" \
+  --train-completion-temperature "$TRAIN_COMPLETION_TEMPERATURE" \
+  $SHIFT_ARG \
   --save-checkpoints \
   --checkpoint-dir "$CHECKPOINT_DIR" \
   --trace-every-steps "$TRACE_EVERY_STEPS" \

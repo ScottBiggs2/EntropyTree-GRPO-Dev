@@ -16,10 +16,17 @@ class ModelAdapter:
     model-agnostic.
     """
 
-    def __init__(self, model: torch.nn.Module, tokenizer, model_type: str = "dream"):
+    def __init__(
+        self,
+        model: torch.nn.Module,
+        tokenizer,
+        model_type: str = "dream",
+        logits_right_shift: bool = True,
+    ):
         self.model = model
         self.tokenizer = tokenizer
         self.model_type = model_type
+        self.logits_right_shift = logits_right_shift
         self.mask_id = tokenizer.mask_token_id
         # Use the actual logits vocabulary size when available.
         # Some Dream tokenizers can have extra/added tokens vs model logits dim.
@@ -44,7 +51,8 @@ class ModelAdapter:
             )
             logits = outputs.logits  # [B, L, V]
             # Dream right-shift: logits[i] predicts token at position i+1 in raw output.
-            logits = torch.cat([logits[:, :1], logits[:, :-1]], dim=1)
+            if self.logits_right_shift:
+                logits = torch.cat([logits[:, :1], logits[:, :-1]], dim=1)
             return logits
 
         # MDLM-style model: standard masked LM API.
@@ -73,8 +81,12 @@ class ModelAdapter:
         """Return last sampling diagnostics (best-effort) and clear them."""
         out: Dict[str, float] = {}
         for k, v in list(self._sampling_diag.items()):
-            if isinstance(v, (int, float)) and not isinstance(v, bool):
-                out[k] = float(v)
+            try:
+                # Robustly handle torch.Tensor, numpy scalars, and native floats.
+                if isinstance(v, (int, float, torch.Tensor)) and not isinstance(v, bool):
+                    out[k] = float(v)
+            except (TypeError, ValueError):
+                continue
         self._sampling_diag = {}
         return out
 

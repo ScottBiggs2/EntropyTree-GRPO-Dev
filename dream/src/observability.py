@@ -154,6 +154,10 @@ def tree_diversity_metrics(root: MCTSNode, leaves: Iterable[MCTSNode]) -> Dict[s
             "mean_sibling_position_overlap": 0.0,
             "mean_sibling_token_agreement": 0.0,
             "unique_steps_in_edge_count": 0.0,
+            "edge_steps_mean": 0.0,
+            "edge_steps_min": 0.0,
+            "edge_steps_max": 0.0,
+            "edge_steps_std": 0.0,
         }
 
     leaf_tokens = [_response_tokens(leaf) for leaf in leaves]

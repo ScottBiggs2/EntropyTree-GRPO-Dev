@@ -39,6 +39,12 @@ class MCTSConfig:
     # Higher temperature for training-time generation (BaselineGRPOTrainer)
     # to ensure diversity across K samples.  0 = use config.temperature.
     train_sampling_temperature: float = 0.8
+    # Temperature for the final denoising completion (after tree or k-steps)
+    # during training. If 0.0, fall back to train_sampling_temperature.
+    train_completion_temperature: float = 0.0
+    # Dream models require a right-shift on logits: logits[i] predicts token[i+1].
+    # Set to False for standard Autoregressive/Diffusion models where logits[i] predicts token[i].
+    logits_right_shift: bool = True
     top_p: float = 0.95
     remasking: str = "low_confidence"
     # Dream-specific generation params (for baseline GRPO / diffusion_generate)

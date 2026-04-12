@@ -116,7 +116,12 @@ class BaselineGRPOTrainer:
         self.optimizer = optimizer
         self.scheduler = scheduler
 
-        self.adapter = ModelAdapter(model, tokenizer, model_type=config.model_type)
+        self.adapter = ModelAdapter(
+            model,
+            tokenizer,
+            model_type=config.model_type,
+            logits_right_shift=config.logits_right_shift,
+        )
         self.entropy_computer = EntropyComputer()
         self.tree_builder = EntropyGuidedTreeBuilder(
             self.adapter, tokenizer, config, self.entropy_computer
@@ -353,7 +358,12 @@ class EntropyMCTSTrainer:
         self.optimizer = optimizer
         self.scheduler = scheduler
 
-        self.adapter = ModelAdapter(model, tokenizer, model_type=config.model_type)
+        self.adapter = ModelAdapter(
+            model,
+            tokenizer,
+            model_type=config.model_type,
+            logits_right_shift=config.logits_right_shift,
+        )
         self.entropy_computer = EntropyComputer()
         self.tree_builder = EntropyGuidedTreeBuilder(
             self.adapter, tokenizer, config, self.entropy_computer
@@ -423,6 +433,7 @@ class EntropyMCTSTrainer:
         entropies = [n.entropy for n in [root] + leaves if n.entropy is not None]
         avg_entropy = sum(entropies) / len(entropies) if entropies else 0.0
 
+        rstats = _reward_stats(rewards)
         return {
             "loss": 0.0,
             "avg_reward": avg_reward,
@@ -434,6 +445,7 @@ class EntropyMCTSTrainer:
             "avg_entropy": avg_entropy,
             "n_transitions": 0.0,
             "n_loss_forwards": 0.0,
+            **rstats,
             **tree_diversity_metrics(root, leaves),
         }
 

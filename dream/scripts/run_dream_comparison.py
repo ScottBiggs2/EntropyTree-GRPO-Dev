@@ -196,7 +196,8 @@ def _reduce_numeric_metrics(metrics: dict[str, Any], *, world_size: int) -> dict
     out: dict[str, Any] = dict(metrics)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     for k, v in list(metrics.items()):
-        if not (isinstance(v, (int, float)) and not isinstance(v, bool)):
+        # Accept int, float, numpy scalars, and torch tensors.
+        if not (isinstance(v, (int, float, torch.Tensor)) and not isinstance(v, bool)):
             continue
         t = torch.tensor(float(v), device=device)
         torch.distributed.all_reduce(t, op=torch.distributed.ReduceOp.SUM)
@@ -392,6 +393,26 @@ def main() -> int:
         help="With --save-checkpoints: also save every N global steps (0 = only final.pt per phase).",
     )
     p.add_argument(
+        "--train-completion-temperature",
+        type=float,
+        default=0.0,
+        dest="train_completion_temperature",
+        help="Temperature for the final denoising completion (after tree or k-steps) during training. "
+        "If 0.0, fall back to --train-sampling-temperature.",
+    )
+    p.add_argument(
+        "--logits-right-shift",
+        action="store_true",
+        default=True,
+        help="Apply right-shift to model logits (required for Dream models). Default: True.",
+    )
+    p.add_argument(
+        "--no-logits-right-shift",
+        action="store_false",
+        dest="logits_right_shift",
+        help="Disable right-shift on model logits (for standard AR/Diffusion models).",
+    )
+    p.add_argument(
         "--wandb_prefixed_keys",
         action="store_true",
         help="Log metrics as phase/key (separate charts per arm). Default: flat keys like run_experiment_2.py for easy multi-run compare.",
@@ -490,6 +511,8 @@ def main() -> int:
         learning_rate=args.learning_rate,
         temperature=args.temperature,
         train_sampling_temperature=args.train_sampling_temperature,
+        train_completion_temperature=args.train_completion_temperature,
+        logits_right_shift=args.logits_right_shift,
         use_lora=use_lora,
         lora_r=args.lora_r,
         lora_alpha=args.lora_alpha,
@@ -588,6 +611,35 @@ def main() -> int:
                 "workload_source": workload["source"],
             },
         )
+        # Pre-register core metric keys so WandB creates panels immediately.
+        # Without this, metrics that first appear after step 0 may not get
+        # auto-panels in the dashboard (a common source of "missing metrics").
+        _CORE_METRICS = [
+            "loss", "avg_reward", "mean_reward", "min_reward", "max_reward",
+            "reward_std", "reward_range", "unique_rewards_frac",
+            "exec_frac_mean", "shaping_bonus_mean", "grad_norm",
+            "tree_nodes", "tree_leaves", "avg_entropy", "lr",
+            "n_transitions", "mean_abs_adv", "mean_w_time", "mean_w_ent",
+            "mean_w_ent_raw", "frac_entropy_clamped_low", "frac_entropy_clamped_high",
+            "mean_edge_denoising_delta", "mean_weight", "mean_weighted_adv_logp",
+            "n_loss_forwards",
+            "leaf_text_unique_frac", "leaf_path_unique_frac",
+            "leaf_schedule_unique_frac", "avg_pairwise_leaf_hamming",
+            "avg_pairwise_schedule_distance",
+            "mean_sibling_position_overlap", "mean_sibling_token_agreement",
+            "unique_steps_in_edge_count",
+            "edge_steps_mean", "edge_steps_min", "edge_steps_max", "edge_steps_std",
+            "wall_sec_step",
+        ]
+        for m in _CORE_METRICS:
+            try:
+                wandb.define_metric(m, step_metric="global_step")
+            except Exception:
+                pass  # old wandb versions may not support define_metric
+        try:
+            wandb.define_metric("global_step")
+        except Exception:
+            pass
 
     global_step = 0
 
@@ -599,9 +651,15 @@ def main() -> int:
 
         row: Dict[str, float] = {}
         for k, v in metrics.items():
-            if isinstance(v, (int, float)) and not isinstance(v, bool):
+            if isinstance(v, bool):
+                continue
+            # Accept int, float, numpy scalars, and torch 0-d tensors.
+            try:
                 row[k] = float(v)
+            except (TypeError, ValueError):
+                continue
         row.update(extra)
+        row["global_step"] = float(global_step)
         if args.wandb_prefixed_keys:
             row = {f"{phase_tag}/{k}": v for k, v in row.items()}
         wandb.log(row, step=global_step)
@@ -673,6 +731,8 @@ def main() -> int:
             "cfg_max_steps_per_expansion": float(cfg.max_steps_per_expansion),
             "cfg_temperature": float(cfg.temperature),
             "cfg_train_sampling_temperature": float(cfg.train_sampling_temperature),
+            "cfg_train_completion_temperature": float(cfg.train_completion_temperature),
+            "cfg_logits_right_shift": 1.0 if cfg.logits_right_shift else 0.0,
             "cfg_num_baseline_samples": float(cfg.num_baseline_samples),
             "cfg_use_lora": 1.0 if cfg.use_lora else 0.0,
             "cfg_reward_timeout": float(args.reward_timeout),

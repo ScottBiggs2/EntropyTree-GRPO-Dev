@@ -162,6 +162,7 @@ class EntropyGuidedTreeBuilder:
         token_entropy = self.entropy_computer.compute_token_entropy_from_logits(
             logits
         )
+        # Observability uses these logits; we store them only temporarily.
         node.token_entropy = token_entropy[0]
         mask_pos = (node.state == self.mask_id) & (node.attention_mask.bool())
         if mask_pos.any():
@@ -180,6 +181,10 @@ class EntropyGuidedTreeBuilder:
                 )
         else:
             node.entropy = 0.0
+            
+        # Memory optimization (B4): The scalar `node.entropy` is enough for loss/selection.
+        # Wipe the big [L, V] tensor to free GPU memory.
+        node.token_entropy = None
 
     # ---- Expansion / denoising ----
 
@@ -215,13 +220,12 @@ class EntropyGuidedTreeBuilder:
         base_temp = base_temp_override if base_temp_override is not None and base_temp_override > 0.0 else self.config.temperature
         if node.entropy is None:
             return base_temp
-        masking_ratio = node.masking_ratio()
-        expected_h = self.entropy_computer.expected_entropy(
-            masking_ratio, vocab_size=self.vocab_size
-        )
-        if expected_h < 1e-6:
+        
+        # Consistent normalization (C3): use log(V) analytic bound.
+        log_v = math.log(max(self.vocab_size, 1))
+        if log_v < 1e-6:
             return base_temp
-        uncertainty_ratio = float(node.entropy) / float(expected_h)
+        uncertainty_ratio = float(node.entropy) / log_v
         ratio_clamped = min(uncertainty_ratio, 1.0)
         return base_temp * (0.7 + 0.6 * ratio_clamped)
 
@@ -285,11 +289,7 @@ class EntropyGuidedTreeBuilder:
         branch_threshold: float,
         temperature: float,
     ) -> MCTSNode:
-        """Entropy-threshold adaptive stepping.
-
-        Per-step unmasking uses the *global* denoising schedule so that each
-        expansion only partially denoises the response.
-        """
+        """Entropy-threshold adaptive stepping."""
         state = node.state.clone()
         attn = node.attention_mask.clone()
         prompt_len = node.prompt_len
@@ -299,6 +299,8 @@ class EntropyGuidedTreeBuilder:
 
         total_T = self.config.total_denoising_steps
         steps_taken = 0
+        log_v = math.log(max(self.vocab_size, 1))
+
         with torch.no_grad():
             for step in range(max_steps):
                 mask_now = (state == self.mask_id) & response_region
@@ -309,11 +311,16 @@ class EntropyGuidedTreeBuilder:
                 logits = self.adapter.forward_logits(
                     state.unsqueeze(0), attn.unsqueeze(0)
                 )[0]
-                probs = F.softmax(logits, dim=-1)
-                token_entropy = -(probs * torch.log(probs + 1e-10)).sum(dim=-1)
-                masked_entropy = (
-                    token_entropy[mask_now].mean().item() if mask_now.any() else 0.0
-                )
+
+                # Optimized forward (B3): Reuse logits to check entropy of current state.
+                # In adaptive mode, we branch if uncertainty is HIGH (needs more exploration).
+                if steps_taken >= min_steps and log_v > 1e-6:
+                    probs = F.softmax(logits, dim=-1)
+                    ent = -(probs * torch.log(probs + 1e-10)).sum(dim=-1)
+                    masked_entropy = float(ent[mask_now].mean().item())
+                    uncertainty_ratio = masked_entropy / log_v
+                    if uncertainty_ratio > branch_threshold:
+                        break
 
                 x0_pred, conf = self.adapter.sample_and_confidence(
                     logits, mask_now, temperature, self.config.top_p
@@ -327,12 +334,16 @@ class EntropyGuidedTreeBuilder:
                 state[sel] = x0_pred[sel]
                 steps_taken += 1
 
-                if steps_taken >= min_steps:
-                    log_v = math.log(max(self.vocab_size, 1))
-                    if log_v > 1e-6:
-                        uncertainty_ratio = masked_entropy / log_v
-                        if uncertainty_ratio > branch_threshold:
-                            break
+        child = MCTSNode(
+            state=state,
+            attention_mask=attn,
+            prompt_len=prompt_len,
+            step_index=node.step_index + steps_taken,
+            parent=node,
+            mask_id=self.mask_id,
+        )
+        child.steps_in_edge = steps_taken
+        return child
 
         child = MCTSNode(
             state=state,
@@ -364,7 +375,8 @@ class EntropyGuidedTreeBuilder:
 
     def _fill_missing_entropy(self, node: MCTSNode) -> None:
         """DFS: compute entropy for any node that lacks it."""
-        if node.entropy is None:
+        # Memory optimization (B1): skip nodes that are already fully denoised/completed.
+        if node.entropy is None and not getattr(node, "is_completed", False):
             self._compute_node_entropy(node)
         for child in node.children:
             self._fill_missing_entropy(child)
@@ -408,7 +420,12 @@ class EntropyGuidedTreeBuilder:
                 n_masked = int(mask_now.sum().item())
                 if n_masked == 0:
                     break
-                k = min(n_masked, 64)
+                
+                # Baseline pacing (B2): replace hardcoded 64 with global schedule.
+                global_step = len(transitions) # Approximate step count
+                total_T = self.config.total_denoising_steps
+                k = self.adapter.transfer_count(n_masked, global_step, total_T)
+                
                 parent_state = state.clone()
                 parent_attn = attn.clone()
                 logits = self.adapter.forward_logits(
@@ -438,14 +455,25 @@ class EntropyGuidedTreeBuilder:
         response_region[prompt_len : prompt_len + max_new] = True
 
         steps_taken = 0
+        total_T = self.config.total_denoising_steps
+        
+        # Separated temperature (C1): use train_completion_temperature for final leaf completions.
+        comp_temp = getattr(self.config, "train_completion_temperature", 0.0)
+        if comp_temp <= 0.0:
+            comp_temp = getattr(self.config, "train_sampling_temperature", self.config.temperature)
+        
+        temperature = self._node_temperature(node, base_temp_override=comp_temp)
         with torch.no_grad():
-            temperature = self._node_temperature(node)
             while True:
                 mask_now = (state == self.mask_id) & response_region
                 n_masked = int(mask_now.sum().item())
                 if n_masked == 0:
                     break
-                k = min(n_masked, 64)
+                
+                # Completion pacing (B2): replace hardcoded 64 with global schedule.
+                global_step = node.step_index + steps_taken
+                k = self.adapter.transfer_count(n_masked, global_step, total_T)
+                
                 logits = self.adapter.forward_logits(
                     state.unsqueeze(0), attn.unsqueeze(0)
                 )[0]
